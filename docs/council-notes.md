@@ -13,7 +13,7 @@ The initial roadmap was reviewed by independent GPT, DS4, Grok, Claude Opus, and
 Notable dissent:
 
 - one lane argued the primary canary miss may be wrong-target or ended-turn behavior rather than a general Remote stall;
-- the strongest naming alternatives were `backchannel` and `readback`;
+- the strongest naming alternatives were `relayproof` (GPT), `backchannel` (Claude), and `readback` (Kimi);
 - `voice-receipt` was selected because it names the measurable contract and survives provider changes.
 
 The council is advisory. Repository behavior is governed by executable tests and direct evidence, not model consensus.
