@@ -5,23 +5,28 @@ Date: 2026-07-30
 ## Local execution
 
 - Python compile: PASS
-- Unit/replay suite: **13/13 PASS**
+- Unit/replay suite: **35/35 PASS**
 - Doctor fixture: `RED command=voice-canary-20260730 failed=accept reason=canary_timeout`
 - Ruff: PASS
-- Gitleaks: PASS, no leaks found across the initial repository
+- Gitleaks: PASS, no leaks found across the repository after adapter implementation
 - Wheel build: `relayproof-0.1.0.dev0-py3-none-any.whl`
+
+## Real Superset adapter
+
+- Live host read-only `terminal.snapshot`: PASS against `http://127.0.0.1:48900/trpc`
+- Readback: terminal ID matched the selected active DB row; revision `130`; dimensions `55x32`
+- Secret containment: bearer token and terminal text were not printed or persisted
+- Live `terminal.send`: intentionally not executed; the mutation contract is covered by adversarial fake-server tests
+- Default send path: zero-network dry-run; confirmed send requires the exact reviewed baseline revision
 
 ## GitHub Actions status
 
-The first push created Actions run `30527440813`, but GitHub did not allocate a runner. The check annotation was:
-
-> The job was not started because an Actions budget is preventing further use.
-
-No repository code or test step executed in that failed run. Automatic triggers are therefore gated off; the workflow remains available through `workflow_dispatch` once the account Actions budget permits execution.
+The Actions budget blocker was cleared. Subsequent hosted runs `30527849193` and `30527899709` completed successfully. The adapter change extends CI with Ruff and wheel-build gates; its push run is verified separately through GitHub's check receipt.
 
 ## Claim boundary
 
-- Local scaffold and core: GREEN.
+- Local scaffold, core, and real adapter contracts: GREEN.
 - Private GitHub create/push/readback: GREEN.
-- Hosted GitHub Actions execution: YELLOW, blocked by account budget rather than a code/test failure.
-- Live Superset adapter and iOS end-to-end canary: not implemented; roadmap work.
+- Live Superset read-only snapshot: GREEN.
+- Live Superset send/canary: YELLOW by policy because no user terminal was mutated.
+- Hosted GitHub Actions execution: GREEN for the last pushed commit; the adapter commit requires its own post-push check receipt.
