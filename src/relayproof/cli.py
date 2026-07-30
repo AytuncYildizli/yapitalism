@@ -82,7 +82,9 @@ def superset_send(args: argparse.Namespace) -> int:
         )
         return 0
 
-    baseline = adapter.snapshot()
+    # Keep the baseline and polling windows identical so a pre-existing marker
+    # cannot enter the wider polling view after unrelated revision movement.
+    baseline = adapter.snapshot(max_lines=1000)
     if baseline.revision != args.expect_revision:
         print(
             json.dumps(

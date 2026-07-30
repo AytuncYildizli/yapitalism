@@ -145,7 +145,7 @@ class CliTests(unittest.TestCase):
                     ]
                 )
         self.assertEqual(code, 2)
-        adapter_type.return_value.snapshot.assert_called_once_with()
+        adapter_type.return_value.snapshot.assert_called_once_with(max_lines=1000)
         adapter_type.return_value.dispatch.assert_not_called()
         adapter_type.return_value.await_canary.assert_not_called()
         self.assertNotIn("private baseline", output.getvalue())
