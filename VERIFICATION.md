@@ -9,7 +9,7 @@ Date: 2026-07-30
 - Doctor fixture: `RED command=voice-canary-20260730 failed=accept reason=canary_timeout`
 - Ruff: PASS
 - Gitleaks: PASS, no leaks found across the initial repository
-- Wheel build: `voice_receipt-0.1.0.dev0-py3-none-any.whl`
+- Wheel build: `relayproof-0.1.0.dev0-py3-none-any.whl`
 
 ## GitHub Actions status
 

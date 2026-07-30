@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from voice_receipt.model import EvidenceEvent, Leg, LegState, Provenance, Receipt, Status
+from relayproof.model import EvidenceEvent, Leg, LegState, Provenance, Receipt, Status
 
 
 def event(

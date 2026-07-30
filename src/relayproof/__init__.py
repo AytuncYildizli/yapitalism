@@ -1,4 +1,4 @@
-"""Voice Receipt public API."""
+"""RelayProof public API."""
 
 from .model import EvidenceEvent, Leg, LegState, Provenance, Receipt, Status
 

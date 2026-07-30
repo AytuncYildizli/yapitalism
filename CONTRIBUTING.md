@@ -1,6 +1,6 @@
 # Contributing
 
-Voice Receipt is currently a private, small-group project.
+RelayProof is currently a private, small-group project.
 
 ## Development loop
 

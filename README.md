@@ -1,14 +1,14 @@
-# Voice Receipt
+# RelayProof
 
 **Evidence-backed reliability for voice-driven agent work.**
 
-Voice Receipt is a local-first receipt and observability harness for commands that cross opaque voice, remote-agent, and terminal boundaries. It tells you what is proven, what is merely observed, and where a command stopped—without pretending to control closed-source voice clients.
+RelayProof is a local-first receipt and observability harness for commands that cross opaque voice, remote-agent, and terminal boundaries. It tells you what is proven, what is merely observed, and where a command stopped—without pretending to control closed-source voice clients.
 
 > Private MVP. No production deployment, external messaging, or closed-client automation is included.
 
 ## Why
 
-A healthy audio indicator does not prove that a command reached an agent. A terminal spinner does not prove acceptance. A handoff claim does not prove where the handoff landed. Voice Receipt separates these boundaries and requires receipts for each.
+A healthy audio indicator does not prove that a command reached an agent. A terminal spinner does not prove acceptance. A handoff claim does not prove where the handoff landed. RelayProof separates these boundaries and requires receipts for each.
 
 The initial incident behind this repository:
 
@@ -40,7 +40,7 @@ Evidence always carries provenance: `api`, `terminal_diff`, `ui_observation`, `u
 
 ```bash
 python3 -m unittest discover -s tests -v
-PYTHONPATH=src python3 -m voice_receipt.cli doctor fixtures/stuck-revision.json
+PYTHONPATH=src python3 -m relayproof.cli doctor fixtures/stuck-revision.json
 ```
 
 Expected doctor result for the reproduced incident:
@@ -52,7 +52,7 @@ RED command=voice-canary-20260730 failed=accept reason=canary_timeout
 ## Repository map
 
 ```text
-src/voice_receipt/      typed core, canary matching, ledger, CLI
+src/relayproof/      typed core, canary matching, ledger, CLI
 tests/                  deterministic unit and replay tests
 fixtures/               scrubbed incident replays
 docs/architecture.md    component boundaries and evidence model

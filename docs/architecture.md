@@ -2,7 +2,7 @@
 
 ## Boundary model
 
-Voice Receipt observes five independent command legs:
+RelayProof observes five independent command legs:
 
 ```text
 capture → dispatch → accept → work → deliver

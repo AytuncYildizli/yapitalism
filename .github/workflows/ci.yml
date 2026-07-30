@@ -1,6 +1,9 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -23,4 +26,4 @@ jobs:
       - name: Doctor replay
         env:
           PYTHONPATH: src
-        run: python -m voice_receipt.cli doctor fixtures/stuck-revision.json
+        run: python -m relayproof.cli doctor fixtures/stuck-revision.json

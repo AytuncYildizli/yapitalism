@@ -7,7 +7,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from voice_receipt.cli import doctor
+from relayproof.cli import doctor
 
 
 class CliTests(unittest.TestCase):
