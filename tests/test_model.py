@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+import unittest
+
+from voice_receipt.model import EvidenceEvent, Leg, LegState, Provenance, Receipt, Status
+
+
+def event(
+    number: int,
+    leg: Leg,
+    state: LegState = LegState.SUCCEEDED,
+    *,
+    kind: str = "stage.proven",
+    provenance: Provenance = Provenance.API,
+    reason: str = "",
+) -> EvidenceEvent:
+    if leg is Leg.ACCEPT and state is LegState.SUCCEEDED and kind == "stage.proven":
+        kind = "canary.observed"
+        provenance = Provenance.TERMINAL_DIFF
+    return EvidenceEvent(
+        event_id=f"evt-{number}",
+        command_id="cmd-1",
+        leg=leg,
+        state=state,
+        kind=kind,
+        provenance=provenance,
+        occurred_at="fixture",
+        reason=reason,
+    )
+
+
+class ReceiptTests(unittest.TestCase):
+    def test_empty_receipt_is_yellow(self) -> None:
+        self.assertIs(Receipt("cmd-1").status, Status.YELLOW)
+
+    def test_failed_leg_is_red(self) -> None:
+        receipt = Receipt("cmd-1")
+        receipt.record(event(1, Leg.ACCEPT, LegState.FAILED, kind="canary.missed"))
+        self.assertIs(receipt.status, Status.RED)
+        self.assertIn("reason=canary.missed", receipt.summary())
+
+    def test_all_required_legs_are_green(self) -> None:
+        receipt = Receipt("cmd-1")
+        for number, leg in enumerate(Leg, start=1):
+            receipt.record(event(number, leg))
+        self.assertIs(receipt.status, Status.GREEN)
+
+    def test_revision_movement_cannot_prove_acceptance(self) -> None:
+        with self.assertRaisesRegex(ValueError, "accept requires"):
+            event(
+                1,
+                Leg.ACCEPT,
+                kind="terminal.revision",
+                provenance=Provenance.TERMINAL_DIFF,
+            )
+
+    def test_inference_cannot_prove_success(self) -> None:
+        with self.assertRaisesRegex(ValueError, "inference cannot prove"):
+            event(1, Leg.DISPATCH, provenance=Provenance.INFERRED)
+
+    def test_unknown_handoff_blocks_green(self) -> None:
+        receipt = Receipt("cmd-1", handoff_required=True)
+        for number, leg in enumerate(Leg, start=1):
+            receipt.record(event(number, leg))
+        self.assertIs(receipt.status, Status.YELLOW)
+        self.assertIn("handoff_destination", receipt.summary())
+
+    def test_duplicate_event_is_idempotent(self) -> None:
+        receipt = Receipt("cmd-1")
+        evidence = event(1, Leg.CAPTURE)
+        receipt.record(evidence)
+        receipt.record(evidence)
+        self.assertEqual(len(receipt.events), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

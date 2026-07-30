@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+.coverage
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+
+# Sensitive local evidence
+runs/
+ledger/
+*.jsonl
+*.sqlite*
+raw-captures/
+*.log
+.DS_Store

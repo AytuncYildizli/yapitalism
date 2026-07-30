@@ -1,0 +1,29 @@
+{
+  "command_id": "voice-canary-20260730",
+  "handoff_required": false,
+  "events": [
+    {
+      "event_id": "evt-1",
+      "leg": "capture",
+      "state": "succeeded",
+      "kind": "user.intent_reported",
+      "provenance": "user_report"
+    },
+    {
+      "event_id": "evt-2",
+      "leg": "dispatch",
+      "state": "succeeded",
+      "kind": "prompt.delivered",
+      "provenance": "api"
+    },
+    {
+      "event_id": "evt-3",
+      "leg": "accept",
+      "state": "failed",
+      "kind": "canary.missed",
+      "provenance": "terminal_diff",
+      "reason": "canary_timeout",
+      "evidence_ref": "terminal-revision-920118"
+    }
+  ]
+}
