@@ -8,7 +8,7 @@ version = "0.1.0.dev0"
 description = "Evidence-backed reliability for voice-driven agent work"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = "MIT"
 authors = [{name = "Aytunc Yildizli"}]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",

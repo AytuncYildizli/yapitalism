@@ -1,37 +1,17 @@
 # Feature Ledger — Superset Adapter
 
-- `SA-001` — Config/secret boundary
-  - User story: operator supplies endpoint/token/ids without committing or logging secrets.
-  - Expected: typed config; redacted representation; explicit manifest opt-in.
-  - Current: pending.
-  - Retest receipt: tests + gitleaks.
+| feature_id | surface/path/component | user_story | expected_behavior | current_status | evidence | issue_type | fix_status | retest_receipt |
+|---|---|---|---|---|---|---|---|---|
+| SA-001 | `relayproof.adapters.superset.SupersetConfig` | Operator supplies endpoint/token/ids without committing or logging secrets. | Typed config, explicitly selected manifest, redacted config/snapshot/error representations. | Implemented; local contract GREEN. | Manifest validation and token redaction tests. | feature | fixed | `test_config_manifest_is_typed_and_secret_is_redacted`; `test_trpc_error_envelope_is_parsed_and_secret_is_redacted` |
+| SA-002 | `SupersetAdapter.snapshot` / `terminal.snapshot` | Read current terminal revision/text from the actual host tRPC contract. | Standard-library GET to `<endpoint>/terminal.snapshot`; SuperJSON input/result envelopes; bounded timeout. | Implemented; fake-server contract GREEN. Live read-only smoke not run because no manifest was needed or supplied. | Fake server asserts GET path, bearer header, exact input, response parsing, timeout. | feature | fixed-local | `test_snapshot_uses_real_get_contract`; `test_transport_timeout_is_bounded_and_secret_is_not_in_error` |
+| SA-003 | `SupersetAdapter.dispatch` / `terminal.send` | Send one idempotent command to a concrete target. | POST with expected revision, unique/client token, `submit=true`, empty-prompt guard, and repeats disabled; dry-run unless confirmed. | Implemented; fake-server contract GREEN; no live send performed. | Exact POST envelope test plus duplicate-result fail-closed test. | feature | fixed | `test_send_is_dry_run_by_default_and_confirmed_post_is_idempotent`; `test_duplicate_send_result_is_parsed_without_optimistic_success` |
+| SA-004 | `SupersetAdapter.await_canary` / evidence mapping | Distinguish dispatch from proven acceptance. | Bounded polling with line-wrap-safe matcher; canary match succeeds; timeout fails even if revision moves. | Implemented; deterministic contracts GREEN. | Fake clock/server tests and `EvidenceEvent` mapping assertions. | feature | fixed | `test_await_canary_polls_snapshots_and_maps_acceptance_evidence`; `test_await_canary_timeout_is_red_even_when_revision_moves` |
+| SA-005 | `relayproof superset status|send` | Inspect status safely and run send/canary only with explicit confirmation. | Status is read-only and omits terminal text; send is zero-network dry-run unless `--confirm-send`; output omits token/text. | Implemented; CLI tests GREEN. | Mocked status readback and unreachable-endpoint dry-run test. | feature | fixed | `test_superset_status_is_read_only_and_does_not_print_terminal_text`; `test_superset_send_defaults_to_zero_network_dry_run` |
+| SA-006 | Package/build/CI | Collaborators clone and run tests/build. | Full suite, Ruff, compile, doctor, wheel, existing GitHub Actions workflow. | Local gates GREEN; hosted Actions not dispatched in this task. | 23/23 unittest PASS; Ruff PASS; compileall PASS; doctor expected RED fixture; wheel and sdist built. | verification | fixed-local | `python3 -m unittest discover -s tests -v`; `ruff check src tests`; `python3 -m compileall -q src tests`; doctor command; `python3 -m build` |
 
-- `SA-002` — Real snapshot transport
-  - User story: read current terminal revision/text from actual host tRPC.
-  - Expected: `terminal.snapshot` GET envelope parsed and bounded.
-  - Current: pending.
-  - Retest receipt: fake-server contract + live read-only smoke.
+## Claim boundary
 
-- `SA-003` — Receipt-aware dispatch
-  - User story: send one idempotent command to a concrete target.
-  - Expected: `terminal.send` POST with expected revision, client token, prompt-empty guard, no repeat.
-  - Current: pending.
-  - Retest receipt: fake-server contract; no live send by default.
-
-- `SA-004` — Acceptance proof
-  - User story: distinguish dispatched from accepted.
-  - Expected: bounded polling; canary match → acceptance; timeout → RED; revision movement alone insufficient.
-  - Current: pending.
-  - Retest receipt: deterministic fake clock/server scenarios.
-
-- `SA-005` — CLI safety
-  - User story: inspect status safely and run canary only with explicit confirmation.
-  - Expected: read-only command; send defaults dry-run; no token output.
-  - Current: pending.
-  - Retest receipt: CLI tests.
-
-- `SA-006` — Packaging/CI
-  - User story: collaborators clone and run tests/build.
-  - Expected: full suite, Ruff, wheel, GitHub Actions.
-  - Current: pending.
-  - Retest receipt: local + Actions run URL.
+- Adapter implementation and fake-server contracts: **GREEN**.
+- Live read-only Superset smoke: **not run** (optional and no live manifest was used).
+- Live `terminal.send`: **not run by policy**.
+- Hosted CI: **not run in this task**; existing workflow and GitHub settings were not changed.

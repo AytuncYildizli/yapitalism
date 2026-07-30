@@ -49,6 +49,42 @@ Expected doctor result for the reproduced incident:
 RED command=voice-canary-20260730 failed=accept reason=canary_timeout
 ```
 
+## Real Superset adapter
+
+RelayProof talks directly to the local Superset host-service tRPC surface. It does not use a fixture for these operations.
+
+Create an explicit owner-only manifest outside the repository:
+
+```json
+{
+  "endpoint": "http://127.0.0.1:48900/trpc",
+  "bearer_token": "<host-service-secret>",
+  "workspace_id": "<workspace-id>",
+  "terminal_id": "<terminal-id>"
+}
+```
+
+```bash
+chmod 600 /path/to/relayproof-superset.json
+
+# Real, read-only terminal.snapshot. Raw terminal text is never printed.
+PYTHONPATH=src python3 -m relayproof.cli superset status \
+  --manifest /path/to/relayproof-superset.json
+
+# Zero-network dry run. This is the default for send.
+PYTHONPATH=src python3 -m relayproof.cli superset send \
+  --manifest /path/to/relayproof-superset.json \
+  --text '<prompt whose literal text does not contain the expected marker>' \
+  --canary 'RP_ACK:<high-entropy-marker>' \
+  --expect-revision <reviewed-revision>
+
+# A real terminal.send requires the same command plus --confirm-send.
+```
+
+The confirmed path snapshots immediately before dispatch, rejects a changed revision, sends `requireEmptyPrompt=true`, `allowRepeat=false`, a stable `clientToken`, and the exact `expectRevision`, then polls snapshots against a monotonic deadline. HTTP 2xx, PTY revision movement, Superset `verified`, and prompt echo never prove acceptance. Only a command-correlated post-dispatch canary can do that.
+
+Security boundaries: loopback-only `/trpc`, no redirects or ambient proxies, bounded responses, strict `0600` non-symlink manifests, redacted bearer/token handling, and no automatic POST retry after an ambiguous transport failure.
+
 ## Repository map
 
 ```text
