@@ -59,8 +59,19 @@ def superset_status(manifest: Path, max_lines: int | None) -> int:
 
 
 def superset_send(args: argparse.Namespace) -> int:
-    adapter = SupersetAdapter(SupersetConfig.from_manifest(args.manifest))
     command_id = args.client_token or str(uuid.uuid4())
+    if args.confirm_send and args.client_token is None:
+        print(
+            json.dumps(
+                {
+                    "dispatched": False,
+                    "reason": "client_token_required_for_confirmed_send",
+                },
+                sort_keys=True,
+            )
+        )
+        return 2
+    adapter = SupersetAdapter(SupersetConfig.from_manifest(args.manifest))
     if not args.confirm_send:
         dispatched = adapter.dispatch(
             args.text,

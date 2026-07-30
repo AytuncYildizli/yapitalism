@@ -5,7 +5,7 @@ Date: 2026-07-30
 ## Local execution
 
 - Python compile: PASS
-- Unit/replay suite: **35/35 PASS**
+- Unit/replay suite: **40/40 PASS**
 - Doctor fixture: `RED command=voice-canary-20260730 failed=accept reason=canary_timeout`
 - Ruff: PASS
 - Gitleaks: PASS, no leaks found across the repository after adapter implementation
@@ -18,6 +18,9 @@ Date: 2026-07-30
 - Secret containment: bearer token and terminal text were not printed or persisted
 - Live `terminal.send`: intentionally not executed; the mutation contract is covered by adversarial fake-server tests
 - Default send path: zero-network dry-run; confirmed send requires the exact reviewed baseline revision
+- Confirmed send also requires reuse of the explicit client token emitted by dry-run
+- Wrapped/ANSI-split prompt echoes cannot satisfy the structured canary matcher
+- Injected responses fail closed unless delivery ID, revision, submit, duplicate, and target invariants agree
 
 ## GitHub Actions status
 

@@ -16,6 +16,7 @@ from relayproof.adapters.superset import SupersetAdapter, SupersetConfig, TrpcEr
 from relayproof.model import Leg, LegState
 
 CANARY = "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF"
+DELIVERY_ID = "11111111-1111-4111-8111-111111111111"
 
 
 class FakeTrpcServer:
@@ -119,22 +120,24 @@ def send_result(
     revision: int = 9,
     prompt_status: str = "empty",
     runtime: str = "codex",
+    delivery_id: str | None = DELIVERY_ID,
+    revision_after: int | None = 9,
 ) -> dict[str, Any]:
-    return result(
-        {
-            "deliveryId": "delivery-1",
-            "terminalId": terminal_id,
-            "phase": phase,
-            "verified": False,
-            "submitSent": submit_sent,
-            "submitted": submit_sent,
-            "duplicate": duplicate,
-            "revisionBefore": revision,
-            "revisionAfter": revision,
-            "promptStatus": prompt_status,
-            "target": {"runtime": runtime},
-        }
-    )
+    payload: dict[str, Any] = {
+        "deliveryId": delivery_id,
+        "terminalId": terminal_id,
+        "phase": phase,
+        "verified": False,
+        "submitSent": submit_sent,
+        "submitted": submit_sent,
+        "duplicate": duplicate,
+        "revisionBefore": revision,
+        "promptStatus": prompt_status,
+        "target": {"runtime": runtime},
+    }
+    if revision_after is not None:
+        payload["revisionAfter"] = revision_after
+    return result(payload)
 
 
 class SupersetAdapterTests(unittest.TestCase):
@@ -267,11 +270,51 @@ class SupersetAdapterTests(unittest.TestCase):
         self.assertEqual(len(server.requests), 1)
         self.assertEqual(server.requests[0]["method"], "POST")
 
+    def test_confirmed_dispatch_requires_explicit_stable_token(self) -> None:
+        with FakeTrpcServer(lambda *_: send_result()) as server:
+            adapter = SupersetAdapter(self.config(server.endpoint))
+            with self.assertRaisesRegex(ValueError, "explicit stable client_token"):
+                adapter.dispatch("work", expected_revision=9, confirm=True)
+        self.assertEqual(server.requests, [])
+
+    def test_identical_token_replay_is_sent_unchanged_and_parsed_as_duplicate(self) -> None:
+        seen_tokens: list[str] = []
+
+        def responder(_: str, __: str, payload: dict[str, Any]) -> dict[str, Any]:
+            seen_tokens.append(cast(str, payload["clientToken"]))
+            if len(seen_tokens) == 1:
+                return send_result()
+            return send_result(
+                phase="duplicate_ignored",
+                submit_sent=False,
+                duplicate=True,
+                revision_after=None,
+            )
+
+        with FakeTrpcServer(responder) as server:
+            adapter = SupersetAdapter(self.config(server.endpoint))
+            first = adapter.dispatch("work", expected_revision=9, client_token="stable", confirm=True)
+            replay = adapter.dispatch("work", expected_revision=9, client_token="stable", confirm=True)
+        self.assertTrue(first.dispatched)
+        self.assertFalse(replay.dispatched)
+        self.assertEqual(seen_tokens, ["stable", "stable"])
+        self.assertEqual(len(server.requests), 2)
+
     def test_duplicate_and_stale_phase_never_dispatch(self) -> None:
         responses = iter(
             [
-                send_result(phase="duplicate_ignored", submit_sent=False, duplicate=True),
-                send_result(phase="rejected_revision_changed", submit_sent=False),
+                send_result(
+                    phase="duplicate_ignored",
+                    submit_sent=False,
+                    duplicate=True,
+                    revision_after=None,
+                ),
+                send_result(
+                    phase="rejected_revision_changed",
+                    submit_sent=False,
+                    delivery_id=None,
+                    revision_after=None,
+                ),
             ]
         )
         with FakeTrpcServer(lambda *_: next(responses)) as server:
@@ -312,6 +355,39 @@ class SupersetAdapterTests(unittest.TestCase):
         self.assertTrue(sent.dispatched)
         self.assertFalse(sent.prompt_verified)
         self.assertEqual(sent.to_evidence("a").reason, "prompt_not_verified")
+
+    def test_contradictory_injected_envelopes_fail_closed(self) -> None:
+        responses = iter(
+            [
+                send_result(delivery_id=None),
+                send_result(delivery_id="not-a-uuid"),
+                send_result(revision_after=None),
+                send_result(submit_sent=False),
+                send_result(duplicate=True),
+                send_result(revision_after=8),
+            ]
+        )
+        with FakeTrpcServer(lambda *_: next(responses)) as server:
+            adapter = SupersetAdapter(self.config(server.endpoint))
+            for index in range(6):
+                with self.subTest(index=index), self.assertRaisesRegex(TrpcError, "contradictory"):
+                    adapter.dispatch(
+                        "work",
+                        expected_revision=9,
+                        client_token=f"token-{index}",
+                        confirm=True,
+                    )
+
+    def test_dispatch_text_has_utf8_byte_bound_before_network(self) -> None:
+        with FakeTrpcServer(lambda *_: send_result()) as server:
+            adapter = SupersetAdapter(self.config(server.endpoint))
+            bounded = adapter.dispatch("x" * (64 * 1024), expected_revision=9)
+            self.assertTrue(bounded.dry_run)
+            with self.assertRaisesRegex(ValueError, "64 KiB"):
+                adapter.dispatch("x" * (64 * 1024 + 1), expected_revision=9)
+            with self.assertRaisesRegex(ValueError, "64 KiB"):
+                adapter.dispatch("é" * (32 * 1024 + 1), expected_revision=9)
+        self.assertEqual(server.requests, [])
 
     def test_redirect_is_rejected_and_bearer_is_not_forwarded(self) -> None:
         target_hits = 0
@@ -383,11 +459,23 @@ class SupersetAdapterTests(unittest.TestCase):
                     baseline_text=CANARY,
                     submitted_text="derive response",
                 )
+            ansi_split = f"{CANARY[:20]}\x1b[31m{CANARY[20:]}"
+            with self.assertRaisesRegex(ValueError, "submitted text"):
+                adapter.await_canary(
+                    CANARY,
+                    command_id="cmd",
+                    baseline_revision=1,
+                    baseline_text="clean",
+                    submitted_text=ansi_split,
+                )
         self.assertEqual(server.requests, [])
 
     def test_canary_requires_structured_marker_and_advanced_revision(self) -> None:
         snapshots = iter(
-            [snapshot_result(text=CANARY, revision=10), snapshot_result(text=CANARY, revision=11)]
+            [
+                snapshot_result(text=CANARY, revision=10),
+                snapshot_result(text=f"{CANARY[:24]}\n{CANARY[24:]}", revision=11),
+            ]
         )
         with FakeTrpcServer(lambda *_: next(snapshots)) as server:
             observed = SupersetAdapter(self.config(server.endpoint)).await_canary(

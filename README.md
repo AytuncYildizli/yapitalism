@@ -75,10 +75,11 @@ PYTHONPATH=src python3 -m relayproof.cli superset status \
 PYTHONPATH=src python3 -m relayproof.cli superset send \
   --manifest /path/to/relayproof-superset.json \
   --text '<prompt whose literal text does not contain the expected marker>' \
-  --canary 'RP_ACK:<high-entropy-marker>' \
+  --canary 'RELAYPROOF_ACK_<32-uppercase-hex-characters>' \
   --expect-revision <reviewed-revision>
 
-# A real terminal.send requires the same command plus --confirm-send.
+# A real terminal.send requires the dry-run command_id to be reused exactly.
+# Add: --client-token <command_id-from-dry-run> --confirm-send
 ```
 
 The confirmed path snapshots immediately before dispatch, rejects a changed revision, sends `requireEmptyPrompt=true`, `allowRepeat=false`, a stable `clientToken`, and the exact `expectRevision`, then polls snapshots against a monotonic deadline. HTTP 2xx, PTY revision movement, Superset `verified`, and prompt echo never prove acceptance. Only a command-correlated post-dispatch canary can do that.

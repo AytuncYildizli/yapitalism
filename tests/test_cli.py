@@ -142,6 +142,8 @@ class CliTests(unittest.TestCase):
                         "--expect-revision",
                         "7",
                         "--confirm-send",
+                        "--client-token",
+                        "stable-token",
                     ]
                 )
         self.assertEqual(code, 2)
@@ -151,6 +153,29 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("private baseline", output.getvalue())
         self.assertNotIn("private command", output.getvalue())
         self.assertNotIn("top-secret", output.getvalue())
+
+    def test_superset_confirmed_send_without_client_token_is_zero_network_rejected(self) -> None:
+        output = StringIO()
+        with patch("relayproof.cli.SupersetAdapter") as adapter_type, redirect_stdout(output):
+            code = main(
+                [
+                    "superset",
+                    "send",
+                    "--manifest",
+                    "/does/not/need/to/exist.json",
+                    "--text",
+                    "private command",
+                    "--canary",
+                    "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF",
+                    "--expect-revision",
+                    "7",
+                    "--confirm-send",
+                ]
+            )
+        self.assertEqual(code, 2)
+        adapter_type.assert_not_called()
+        self.assertIn("client_token_required_for_confirmed_send", output.getvalue())
+        self.assertNotIn("private command", output.getvalue())
 
 
 if __name__ == "__main__":

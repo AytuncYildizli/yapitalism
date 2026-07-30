@@ -17,10 +17,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+from ...canary import normalize_terminal_text
 from ...model import EvidenceEvent, Leg, LegState, Provenance
 
 _MANIFEST_MAX_BYTES = 64 * 1024
 _RESPONSE_MAX_BYTES = 1024 * 1024
+_DISPATCH_MAX_BYTES = 64 * 1024
 _MAX_LINES = 1000
 _KNOWN_MANIFEST_KEYS = {
     "endpoint",
@@ -408,12 +410,20 @@ class SupersetAdapter:
     ) -> DispatchResult:
         if not isinstance(text, str) or not text:
             raise ValueError("text must not be empty")
+        try:
+            text_bytes = len(text.encode("utf-8"))
+        except UnicodeEncodeError as exc:
+            raise ValueError("text must be valid UTF-8") from exc
+        if text_bytes > _DISPATCH_MAX_BYTES:
+            raise ValueError("text must not exceed 64 KiB when encoded as UTF-8")
         if (
             isinstance(expected_revision, bool)
             or not isinstance(expected_revision, int)
             or expected_revision < 0
         ):
             raise ValueError("expected_revision must be a non-negative integer")
+        if confirm and client_token is None:
+            raise ValueError("confirmed dispatch requires an explicit stable client_token")
         token = client_token or str(uuid.uuid4())
         if not isinstance(token, str) or not token.strip() or len(token) > 200:
             raise ValueError("client_token must contain 1 to 200 characters")
@@ -457,18 +467,38 @@ class SupersetAdapter:
         if not isinstance(target, dict):
             raise TrpcError("Superset response field target was invalid")
         runtime = _required_enum(cast(dict[str, Any], target), "runtime", _RUNTIMES)
+        delivery_id = _optional_string(data, "deliveryId")
+        submit_sent = _required_bool(data, "submitSent")
+        duplicate = _required_bool(data, "duplicate")
+        revision_before = _required_nonnegative_int(data, "revisionBefore")
+        revision_after = _optional_nonnegative_int(data, "revisionAfter")
+        if phase == "injected":
+            if (
+                delivery_id is None
+                or not _is_uuid(delivery_id)
+                or not submit_sent
+                or duplicate
+                or revision_after is None
+                or revision_after < revision_before
+                or revision_before != expected_revision
+            ):
+                raise TrpcError("Superset injected response was contradictory")
+        elif submit_sent:
+            raise TrpcError("Superset rejected response was contradictory")
+        elif phase.startswith("duplicate_") != duplicate:
+            raise TrpcError("Superset duplicate response was contradictory")
         return DispatchResult(
             client_token=token,
             terminal_id=terminal_id,
-            delivery_id=_optional_string(data, "deliveryId"),
+            delivery_id=delivery_id,
             phase=phase,
-            submit_sent=_required_bool(data, "submitSent"),
-            duplicate=_required_bool(data, "duplicate"),
-            revision_before=_required_nonnegative_int(data, "revisionBefore"),
+            submit_sent=submit_sent,
+            duplicate=duplicate,
+            revision_before=revision_before,
             expected_revision=expected_revision,
             prompt_status=prompt_status,
             target_runtime=runtime,
-            revision_after=_optional_nonnegative_int(data, "revisionAfter"),
+            revision_after=revision_after,
         )
 
     def validate_canary(
@@ -479,7 +509,7 @@ class SupersetAdapter:
         submitted_text: str,
     ) -> None:
         _validate_canary(canary)
-        if canary in submitted_text:
+        if _structured_canary_observed(submitted_text, canary):
             raise ValueError("canary must not occur literally in submitted text")
         if _structured_canary_observed(baseline_text, canary):
             raise ValueError("canary was already present in baseline")
@@ -563,13 +593,18 @@ class SupersetAdapter:
         return CanaryResult(False, attempts, last_revision, evidence)
 
 
-_ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-
-
 def _structured_canary_observed(terminal_text: str, canary: str) -> bool:
-    scrubbed = _ANSI_ESCAPE.sub("", terminal_text)
+    normalized = normalize_terminal_text(terminal_text)
     pattern = rf"(?<![A-Z0-9_]){re.escape(canary)}(?![A-Z0-9_])"
-    return re.search(pattern, scrubbed) is not None
+    return re.search(pattern, normalized) is not None
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        parsed = uuid.UUID(value)
+    except ValueError:
+        return False
+    return str(parsed) == value.lower()
 
 
 def _validate_canary(canary: str) -> None:
