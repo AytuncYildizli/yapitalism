@@ -191,7 +191,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("receipt_not_found", output.getvalue())
 
-    def test_confirm_without_claim_is_zero_network_rejected(self) -> None:
+    def test_confirm_without_claim_blocks_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             manifest = root / "manifest.json"
@@ -228,6 +228,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("confirmation_claim_rejected", output.getvalue())
             self.assertNotIn("private command", output.getvalue())
+            adapter.dispatch.assert_not_called()
 
     def test_full_dry_run_confirm_flow_persists_dispatch_and_accept(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
