@@ -519,6 +519,17 @@ class SupersetAdapterTests(unittest.TestCase):
         self.assertIs(missed.evidence.state, LegState.FAILED)
         self.assertEqual(missed.evidence.reason, "canary_timeout")
 
+    def test_structured_canary_accepts_common_acknowledgement_boundaries(self) -> None:
+        adapter = SupersetAdapter(self.config("http://127.0.0.1:1/trpc"))
+        for rendered in (f"OK {CANARY}", f"ACK: {CANARY}", f"{CANARY} DONE"):
+            with self.subTest(rendered=rendered):
+                with self.assertRaisesRegex(ValueError, "baseline"):
+                    adapter.validate_canary(
+                        CANARY,
+                        baseline_text=rendered,
+                        submitted_text="derive response",
+                    )
+
     def test_revision_reset_during_polling_fails_closed(self) -> None:
         with FakeTrpcServer(lambda *_: snapshot_result(revision=4)) as server:
             with self.assertRaisesRegex(TrpcError, "revision reset"):

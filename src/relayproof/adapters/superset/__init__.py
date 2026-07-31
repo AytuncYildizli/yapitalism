@@ -17,7 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
-from ...canary import normalize_terminal_text
+from ...canary import strip_terminal_decoration
 from ...model import EvidenceEvent, Leg, LegState, Provenance
 
 _MANIFEST_MAX_BYTES = 64 * 1024
@@ -594,8 +594,9 @@ class SupersetAdapter:
 
 
 def _structured_canary_observed(terminal_text: str, canary: str) -> bool:
-    normalized = normalize_terminal_text(terminal_text)
-    pattern = rf"(?<![A-Z0-9_]){re.escape(canary)}(?![A-Z0-9_])"
+    normalized = strip_terminal_decoration(terminal_text)
+    wrapped_canary = r"\s*".join(re.escape(character) for character in canary)
+    pattern = rf"(?<![A-Z0-9_]){wrapped_canary}(?![A-Z0-9_])"
     return re.search(pattern, normalized) is not None
 
 

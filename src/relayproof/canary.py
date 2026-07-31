@@ -11,6 +11,11 @@ def normalize_terminal_text(text: str) -> str:
     return _WHITESPACE.sub("", _ANSI_ESCAPE.sub("", text))
 
 
+def strip_terminal_decoration(text: str) -> str:
+    """Remove ANSI decoration while preserving token-separating whitespace."""
+    return _ANSI_ESCAPE.sub("", text)
+
+
 def canary_observed(terminal_text: str, canary: str) -> bool:
     """Return true only when the complete non-empty canary appears in visible text."""
     normalized_canary = normalize_terminal_text(canary)
