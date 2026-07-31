@@ -90,6 +90,10 @@ and contain bounded metadata only. Project one receipt with:
 
 ```bash
 PYTHONPATH=src python3 -m relayproof.cli receipt show <command_id>
+PYTHONPATH=src python3 -m relayproof.cli ledger verify
+PYTHONPATH=src python3 -m relayproof.cli ledger migrate \
+  --source /path/to/legacy.jsonl \
+  --output /path/to/chained.jsonl
 ```
 
 The confirmed path snapshots immediately before dispatch, rejects a changed revision, sends `requireEmptyPrompt=true`, `allowRepeat=false`, a stable `clientToken`, and the exact `expectRevision`, then polls snapshots against a monotonic deadline. HTTP 2xx, PTY revision movement, Superset `verified`, and prompt echo never prove acceptance. Only a command-correlated post-dispatch canary can do that.

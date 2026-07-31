@@ -356,9 +356,71 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(main(["ledger", "verify", "--ledger", str(path)]), 2)
             self.assertIn("event_hash_mismatch", output.getvalue())
 
+    def test_legacy_ledger_blocks_send_before_adapter_activity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ledger = root / "legacy.jsonl"
+            legacy = EvidenceEvent(
+                event_id="legacy-1",
+                command_id="cmd-old",
+                leg=Leg.CAPTURE,
+                state=LegState.SUCCEEDED,
+                kind="user.intent_reported",
+                provenance=Provenance.USER_REPORT,
+            )
+            ledger.write_text(json.dumps(legacy.as_dict()) + "\n", encoding="utf-8")
+            ledger.chmod(0o600)
+            adapter = MagicMock()
+            output = StringIO()
+            with patch("relayproof.cli.SupersetConfig.from_manifest"), patch(
+                "relayproof.cli.SupersetAdapter", return_value=adapter
+            ), redirect_stdout(output):
+                code = main(
+                    [
+                        "superset", "send", "--manifest", str(root / "manifest.json"),
+                        "--text", "private command",
+                        "--canary", "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF",
+                        "--expect-revision", "7",
+                        "--ledger", str(ledger), "--claim-dir", str(root / "claims"),
+                    ]
+                )
+            self.assertEqual(code, 2)
+            self.assertIn("ledger_migration_required", output.getvalue())
+            adapter.snapshot.assert_not_called()
+            adapter.dispatch.assert_not_called()
+
+    def test_legacy_ledger_migration_is_non_destructive_and_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "legacy.jsonl"
+            output_path = root / "v1.jsonl"
+            legacy = EvidenceEvent(
+                event_id="legacy-1",
+                command_id="cmd-old",
+                leg=Leg.CAPTURE,
+                state=LegState.SUCCEEDED,
+                kind="user.intent_reported",
+                provenance=Provenance.USER_REPORT,
+            )
+            original = json.dumps(legacy.as_dict(), sort_keys=True) + "\n"
+            source.write_text(original, encoding="utf-8")
+            source.chmod(0o600)
+            output = StringIO()
+            with redirect_stdout(output):
+                code = main(
+                    ["ledger", "migrate", "--source", str(source), "--output", str(output_path)]
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(source.read_text(encoding="utf-8"), original)
+            self.assertTrue(JsonlLedger(output_path).verify().valid)
+            self.assertIn('"migrated_events": 1', output.getvalue())
+
     def test_superset_confirmed_send_snapshots_and_rejects_revision_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            manifest = Path(directory) / "manifest.json"
+            root = Path(directory)
+            manifest = root / "manifest.json"
+            ledger = root / "events.jsonl"
+            claims = root / "claims"
             manifest.write_text(
                 json.dumps(
                     {
@@ -393,6 +455,10 @@ class CliTests(unittest.TestCase):
                         "--confirm-send",
                         "--client-token",
                         "stable-token",
+                        "--ledger",
+                        str(ledger),
+                        "--claim-dir",
+                        str(claims),
                     ]
                 )
         self.assertEqual(code, 2)

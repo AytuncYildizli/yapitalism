@@ -13,6 +13,25 @@ from .ledger import JsonlLedger
 from .model import EvidenceEvent, Leg, LegState, Provenance, Receipt
 
 
+def _event_from_raw(raw: dict[str, object], *, command_id: str | None = None) -> EvidenceEvent:
+    sequence_raw = raw.get("sequence")
+    if sequence_raw is not None and (isinstance(sequence_raw, bool) or not isinstance(sequence_raw, int)):
+        raise ValueError("event sequence must be an integer")
+    return EvidenceEvent(
+        event_id=str(raw["event_id"]),
+        command_id=command_id or str(raw["command_id"]),
+        leg=Leg(raw["leg"]),
+        state=LegState(raw["state"]),
+        kind=str(raw["kind"]),
+        provenance=Provenance(raw["provenance"]),
+        occurred_at=str(raw.get("occurred_at", "fixture")),
+        reason=str(raw.get("reason", "")),
+        evidence_ref=str(raw.get("evidence_ref", "")),
+        sequence=sequence_raw,
+        supersedes=(str(raw["supersedes"]) if raw.get("supersedes") is not None else None),
+    )
+
+
 def receipt_from_fixture(payload: dict[str, Any]) -> Receipt:
     receipt = Receipt(
         command_id=str(payload["command_id"]),
@@ -20,21 +39,7 @@ def receipt_from_fixture(payload: dict[str, Any]) -> Receipt:
         handoff_destination=payload.get("handoff_destination"),
     )
     for raw in payload.get("events", []):
-        receipt.record(
-            EvidenceEvent(
-                event_id=str(raw["event_id"]),
-                command_id=receipt.command_id,
-                leg=Leg(raw["leg"]),
-                state=LegState(raw["state"]),
-                kind=str(raw["kind"]),
-                provenance=Provenance(raw["provenance"]),
-                occurred_at=str(raw.get("occurred_at", "fixture")),
-                reason=str(raw.get("reason", "")),
-                evidence_ref=str(raw.get("evidence_ref", "")),
-                sequence=(int(raw["sequence"]) if raw.get("sequence") is not None else None),
-                supersedes=(str(raw["supersedes"]) if raw.get("supersedes") is not None else None),
-            )
-        )
+        receipt.record(_event_from_raw(raw, command_id=receipt.command_id))
     return receipt
 
 
@@ -76,6 +81,42 @@ def ledger_verify(ledger_path: Path) -> int:
     return 0 if result.valid else 2
 
 
+def ledger_migrate(source_path: Path, output_path: Path) -> int:
+    if source_path.resolve() == output_path.resolve() or output_path.exists():
+        print(json.dumps({"migrated": False, "reason": "migration_output_must_be_new"}, sort_keys=True))
+        return 2
+    try:
+        source_rows = JsonlLedger(source_path).read()
+        if any(
+            row.get("schema_version") is not None
+            or row.get("sequence") is not None
+            or row.get("event_hash") is not None
+            for row in source_rows
+        ):
+            raise ValueError("source is not a legacy ledger")
+        output = JsonlLedger(output_path)
+        for row in source_rows:
+            output.append(_event_from_raw(row))
+        verification = output.verify()
+        if not verification.valid:
+            raise ValueError("migrated ledger failed verification")
+    except (KeyError, OSError, ValueError):
+        print(json.dumps({"migrated": False, "reason": "ledger_migration_failed"}, sort_keys=True))
+        return 2
+    print(
+        json.dumps(
+            {
+                "migrated": True,
+                "migrated_events": verification.event_count,
+                "chain_head": verification.chain_head,
+                "source_unchanged": True,
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def superset_status(manifest: Path, max_lines: int | None) -> int:
     adapter = SupersetAdapter(SupersetConfig.from_manifest(manifest))
     snapshot = adapter.snapshot(max_lines=max_lines)
@@ -106,8 +147,18 @@ def superset_send(args: argparse.Namespace) -> int:
             )
         )
         return 2
-    adapter = SupersetAdapter(SupersetConfig.from_manifest(args.manifest))
     ledger = JsonlLedger(args.ledger)
+    try:
+        ledger.require_appendable()
+    except (OSError, ValueError):
+        print(
+            json.dumps(
+                {"command_id": command_id, "dispatched": False, "reason": "ledger_migration_required"},
+                sort_keys=True,
+            )
+        )
+        return 2
+    adapter = SupersetAdapter(SupersetConfig.from_manifest(args.manifest))
     claims = ConfirmationClaimStore(args.claim_dir)
     if not args.confirm_send:
         dispatched = adapter.dispatch(
@@ -264,6 +315,9 @@ def build_parser() -> argparse.ArgumentParser:
     ledger_commands = ledger_parser.add_subparsers(dest="ledger_command", required=True)
     ledger_verify_parser = ledger_commands.add_parser("verify", help="verify sequence and hash-chain integrity")
     ledger_verify_parser.add_argument("--ledger", type=Path, default=_state_root() / "events.jsonl")
+    ledger_migrate_parser = ledger_commands.add_parser("migrate", help="copy a legacy ledger into a new chained file")
+    ledger_migrate_parser.add_argument("--source", type=Path, required=True)
+    ledger_migrate_parser.add_argument("--output", type=Path, required=True)
 
     superset_parser = subcommands.add_parser("superset", help="operate a Superset terminal")
     superset_commands = superset_parser.add_subparsers(dest="superset_command", required=True)
@@ -297,6 +351,8 @@ def main(argv: list[str] | None = None) -> int:
         return receipt_show(args.ledger, args.command_id)
     if args.command == "ledger" and args.ledger_command == "verify":
         return ledger_verify(args.ledger)
+    if args.command == "ledger" and args.ledger_command == "migrate":
+        return ledger_migrate(args.source, args.output)
     if args.command == "superset" and args.superset_command == "status":
         return superset_status(args.manifest, args.max_lines)
     if args.command == "superset" and args.superset_command == "send":

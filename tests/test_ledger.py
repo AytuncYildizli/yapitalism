@@ -56,6 +56,29 @@ class LedgerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "different payload"):
                 ledger.append(evidence("evt-1", command_id="cmd-other"))
 
+    def test_verify_names_schema_sequence_and_link_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "events.jsonl"
+            ledger = JsonlLedger(path)
+            ledger.append(evidence("evt-1"))
+            ledger.append(evidence("evt-2"))
+            original = [dict(row) for row in ledger.read()]
+
+            cases = (
+                ("schema_version", 99, "schema_version_mismatch"),
+                ("sequence", 3, "sequence_mismatch"),
+                ("prev_hash", "wrong", "previous_hash_mismatch"),
+            )
+            for field, value, reason in cases:
+                rows = [dict(row) for row in original]
+                rows[1][field] = value
+                path.write_text(
+                    "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
+                    encoding="utf-8",
+                )
+                path.chmod(0o600)
+                self.assertEqual(ledger.verify().reason, reason)
+
     def test_verify_detects_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "events.jsonl"

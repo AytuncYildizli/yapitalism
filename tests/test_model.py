@@ -88,6 +88,14 @@ class ReceiptTests(unittest.TestCase):
         self.assertIs(receipt.status, Status.YELLOW)
         self.assertNotIn("failed=accept", receipt.summary())
 
+    def test_latest_success_hides_prior_unsuperseded_failure_from_summary(self) -> None:
+        receipt = Receipt("cmd-1")
+        receipt.record(event(1, Leg.DISPATCH, LegState.FAILED, reason="ambiguous", sequence=1))
+        receipt.record(event(2, Leg.DISPATCH, sequence=2))
+
+        self.assertIs(receipt.status, Status.YELLOW)
+        self.assertNotIn("failed=dispatch", receipt.summary())
+
     def test_sequence_not_wall_clock_controls_latest_event(self) -> None:
         receipt = Receipt("cmd-1")
         receipt.record(event(2, Leg.DISPATCH, LegState.FAILED, sequence=2))
