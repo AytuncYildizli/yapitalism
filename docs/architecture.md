@@ -32,6 +32,14 @@ Every event declares one of:
 
 Inference can explain a verdict but cannot independently satisfy a required leg.
 
+## Authority and projections
+
+The verified JSONL event ledger is the sole local authority. CLI summaries, manifests, search indexes, and future databases are read-only rebuildable projections. Dual writable authority is forbidden.
+
+Ledger sequence controls ordering. Wall-clock timestamps are provenance only. Explicit supersession can remove stale evidence from projection without deleting append-only history.
+
+The event envelope separates actor, source, target, session, command, and delivery identity. These fields support attribution and correlation; they never prove a leg or change receipt color.
+
 ## Status projection
 
 - Any failed required leg → RED.
