@@ -114,7 +114,20 @@ class Receipt:
                 ),
             )
         ]
-        superseded = {event.supersedes for event in ordered if event.supersedes is not None}
+        # Supersession is deliberately restricted to the same leg. Unconstrained,
+        # any event could delete any other: appending a CAPTURE success that
+        # supersedes an ACCEPT failure would drop that failure, resurrect an
+        # older ACCEPT success, and turn a RED receipt GREEN. A leg may correct
+        # its own record and nothing else.
+        by_id = {event.event_id: event for event in ordered}
+        superseded: set[str] = set()
+        for event in ordered:
+            target_id = event.supersedes
+            if target_id is None:
+                continue
+            target = by_id.get(target_id)
+            if target is not None and target.leg is event.leg:
+                superseded.add(target_id)
         return tuple(event for event in ordered if event.event_id not in superseded)
 
     @property

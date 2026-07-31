@@ -495,3 +495,58 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReceiptShowVerificationTests(unittest.TestCase):
+    """`receipt show` must not project from a ledger whose chain is broken."""
+
+    def build_ledger(self, path: Path) -> None:
+        ledger = JsonlLedger(path)
+        for number, leg in enumerate(Leg, start=1):
+            kind = "canary.observed" if leg is Leg.ACCEPT else "stage.proven"
+            ledger.append(
+                EvidenceEvent(
+                    event_id=f"evt-{number}",
+                    command_id="cmd-1",
+                    leg=leg,
+                    state=LegState.SUCCEEDED,
+                    kind=kind,
+                    provenance=Provenance.API,
+                )
+            )
+
+    def test_intact_ledger_projects(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "events.jsonl"
+            self.build_ledger(path)
+            output = StringIO()
+            with redirect_stdout(output):
+                code = main(["receipt", "show", "cmd-1", "--ledger", str(path)])
+            self.assertEqual(code, 0)
+            self.assertIn("GREEN", output.getvalue())
+
+    def test_tampered_row_is_refused_instead_of_projected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "events.jsonl"
+            self.build_ledger(path)
+
+            # Flip the acceptance row to a failure without repairing the hash.
+            # `read()` still parses it, so only chain verification catches this.
+            lines = path.read_text(encoding="utf-8").splitlines()
+            rows = [json.loads(line) for line in lines]
+            for row in rows:
+                if row.get("leg") == Leg.ACCEPT.value:
+                    row["state"] = LegState.FAILED.value
+                    row["kind"] = "canary.missed"
+            path.write_text(
+                "".join(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+
+            output = StringIO()
+            with redirect_stdout(output):
+                code = main(["receipt", "show", "cmd-1", "--ledger", str(path)])
+            self.assertEqual(code, 2)
+            printed = output.getvalue()
+            self.assertIn("ledger_unverified", printed)
+            self.assertNotIn("GREEN", printed)

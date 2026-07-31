@@ -56,7 +56,21 @@ def _state_root() -> Path:
 
 
 def receipt_show(ledger_path: Path, command_id: str) -> int:
-    rows = [row for row in JsonlLedger(ledger_path).read() if row.get("command_id") == command_id]
+    ledger = JsonlLedger(ledger_path)
+    # Verify the chain before projecting. `read()` parses rows but checks no
+    # hashes, so without this an edited row — acceptance flipped to succeeded —
+    # projects GREEN even though `ledger verify` would reject the file. The
+    # chain is only worth having if the consumer that prints verdicts uses it.
+    verification = ledger.verify()
+    if not verification.valid:
+        print(
+            json.dumps(
+                {"command_id": command_id, "reason": "ledger_unverified", "detail": verification.reason},
+                sort_keys=True,
+            )
+        )
+        return 2
+    rows = [row for row in ledger.read() if row.get("command_id") == command_id]
     if not rows:
         print(json.dumps({"command_id": command_id, "reason": "receipt_not_found"}, sort_keys=True))
         return 2

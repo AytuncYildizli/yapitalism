@@ -106,3 +106,44 @@ class ReceiptTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SupersessionScopeTests(unittest.TestCase):
+    """Supersession may correct a leg's own record and nothing else."""
+
+    def all_legs_green(self) -> Receipt:
+        receipt = Receipt(command_id="cmd-1")
+        for number, leg in enumerate(Leg, start=1):
+            receipt.record(event(number, leg, sequence=number))
+        return receipt
+
+    def test_cross_leg_supersession_cannot_hide_a_failed_leg(self) -> None:
+        receipt = self.all_legs_green()
+        self.assertIs(receipt.status, Status.GREEN)
+
+        receipt.record(
+            event(90, Leg.ACCEPT, LegState.FAILED, kind="canary.missed", reason="canary_timeout", sequence=90)
+        )
+        self.assertIs(receipt.status, Status.RED)
+
+        # A CAPTURE event must not be able to delete the ACCEPT failure and
+        # resurrect the older ACCEPT success.
+        receipt.record(
+            event(91, Leg.CAPTURE, sequence=91, supersedes="evt-90")
+        )
+        self.assertIs(receipt.status, Status.RED)
+
+    def test_same_leg_supersession_still_applies(self) -> None:
+        receipt = self.all_legs_green()
+        receipt.record(
+            event(90, Leg.WORK, LegState.FAILED, kind="work.stalled", reason="stalled", sequence=90)
+        )
+        self.assertIs(receipt.status, Status.RED)
+
+        receipt.record(event(91, Leg.WORK, sequence=91, supersedes="evt-90"))
+        self.assertIs(receipt.status, Status.GREEN)
+
+    def test_supersedes_pointing_at_an_absent_event_changes_nothing(self) -> None:
+        receipt = self.all_legs_green()
+        receipt.record(event(92, Leg.WORK, sequence=92, supersedes="evt-does-not-exist"))
+        self.assertIs(receipt.status, Status.GREEN)
