@@ -31,6 +31,8 @@ def receipt_from_fixture(payload: dict[str, Any]) -> Receipt:
                 occurred_at=str(raw.get("occurred_at", "fixture")),
                 reason=str(raw.get("reason", "")),
                 evidence_ref=str(raw.get("evidence_ref", "")),
+                sequence=(int(raw["sequence"]) if raw.get("sequence") is not None else None),
+                supersedes=(str(raw["supersedes"]) if raw.get("supersedes") is not None else None),
             )
         )
     return receipt
@@ -63,6 +65,22 @@ def receipt_show(ledger_path: Path, command_id: str) -> int:
         summary += " handoff=unrecorded"
     print(summary)
     return 0
+
+
+def ledger_verify(ledger_path: Path) -> int:
+    result = JsonlLedger(ledger_path).verify()
+    print(
+        json.dumps(
+            {
+                "valid": result.valid,
+                "event_count": result.event_count,
+                "chain_head": result.chain_head,
+                "reason": result.reason,
+            },
+            sort_keys=True,
+        )
+    )
+    return 0 if result.valid else 2
 
 
 def superset_status(manifest: Path, max_lines: int | None) -> int:
@@ -254,6 +272,11 @@ def build_parser() -> argparse.ArgumentParser:
     receipt_show_parser.add_argument("command_id")
     receipt_show_parser.add_argument("--ledger", type=Path, default=_state_root() / "events.jsonl")
 
+    ledger_parser = subcommands.add_parser("ledger", help="verify the authoritative evidence ledger")
+    ledger_commands = ledger_parser.add_subparsers(dest="ledger_command", required=True)
+    ledger_verify_parser = ledger_commands.add_parser("verify", help="verify sequence and hash-chain integrity")
+    ledger_verify_parser.add_argument("--ledger", type=Path, default=_state_root() / "events.jsonl")
+
     superset_parser = subcommands.add_parser("superset", help="operate a Superset terminal")
     superset_commands = superset_parser.add_subparsers(dest="superset_command", required=True)
     status_parser = superset_commands.add_parser("status", help="read terminal snapshot metadata")
@@ -284,6 +307,8 @@ def main(argv: list[str] | None = None) -> int:
         return doctor(args.fixture)
     if args.command == "receipt" and args.receipt_command == "show":
         return receipt_show(args.ledger, args.command_id)
+    if args.command == "ledger" and args.ledger_command == "verify":
+        return ledger_verify(args.ledger)
     if args.command == "superset" and args.superset_command == "status":
         return superset_status(args.manifest, args.max_lines)
     if args.command == "superset" and args.superset_command == "send":

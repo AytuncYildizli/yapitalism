@@ -328,6 +328,34 @@ class CliTests(unittest.TestCase):
             self.assertEqual(rows[0]["kind"], "terminal.send.ambiguous")
             self.assertEqual(adapter.dispatch.call_count, 1)
 
+    def test_ledger_verify_reports_chain_head_and_tampering(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "events.jsonl"
+            JsonlLedger(path).append(
+                EvidenceEvent(
+                    event_id="evt-1",
+                    command_id="cmd-1",
+                    leg=Leg.CAPTURE,
+                    state=LegState.SUCCEEDED,
+                    kind="user.intent_reported",
+                    provenance=Provenance.USER_REPORT,
+                )
+            )
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(main(["ledger", "verify", "--ledger", str(path)]), 0)
+            self.assertIn('"valid": true', output.getvalue())
+            self.assertIn('"event_count": 1', output.getvalue())
+
+            rows = JsonlLedger(path).read()
+            rows[0]["reason"] = "tampered"
+            path.write_text(json.dumps(rows[0]) + "\n", encoding="utf-8")
+            path.chmod(0o600)
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(main(["ledger", "verify", "--ledger", str(path)]), 2)
+            self.assertIn("event_hash_mismatch", output.getvalue())
+
     def test_superset_confirmed_send_snapshots_and_rejects_revision_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             manifest = Path(directory) / "manifest.json"

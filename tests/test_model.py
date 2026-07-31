@@ -13,6 +13,8 @@ def event(
     kind: str = "stage.proven",
     provenance: Provenance = Provenance.API,
     reason: str = "",
+    sequence: int | None = None,
+    supersedes: str | None = None,
 ) -> EvidenceEvent:
     if leg is Leg.ACCEPT and state is LegState.SUCCEEDED and kind == "stage.proven":
         kind = "canary.observed"
@@ -26,6 +28,8 @@ def event(
         provenance=provenance,
         occurred_at="fixture",
         reason=reason,
+        sequence=sequence,
+        supersedes=supersedes,
     )
 
 
@@ -71,6 +75,25 @@ class ReceiptTests(unittest.TestCase):
         receipt.record(evidence)
         receipt.record(evidence)
         self.assertEqual(len(receipt.events), 1)
+
+    def test_superseded_failure_does_not_poison_status_or_summary(self) -> None:
+        receipt = Receipt("cmd-1")
+        receipt.record(
+            event(1, Leg.ACCEPT, LegState.FAILED, kind="canary.missed", reason="timeout", sequence=1)
+        )
+        receipt.record(
+            event(2, Leg.ACCEPT, kind="canary.observed", sequence=2, supersedes="evt-1")
+        )
+
+        self.assertIs(receipt.status, Status.YELLOW)
+        self.assertNotIn("failed=accept", receipt.summary())
+
+    def test_sequence_not_wall_clock_controls_latest_event(self) -> None:
+        receipt = Receipt("cmd-1")
+        receipt.record(event(2, Leg.DISPATCH, LegState.FAILED, sequence=2))
+        receipt.record(event(1, Leg.DISPATCH, sequence=1))
+
+        self.assertIs(receipt.status, Status.RED)
 
 
 if __name__ == "__main__":
