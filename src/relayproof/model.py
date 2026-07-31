@@ -53,6 +53,11 @@ class EvidenceEvent:
     evidence_ref: str = ""
     sequence: int | None = None
     supersedes: str | None = None
+    actor_id: str | None = None
+    source_id: str | None = None
+    target_id: str | None = None
+    session_id: str | None = None
+    delivery_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.event_id.strip() or not self.command_id.strip() or not self.kind.strip():
@@ -69,6 +74,10 @@ class EvidenceEvent:
             raise ValueError("sequence must be positive when provided")
         if self.supersedes is not None and not self.supersedes.strip():
             raise ValueError("supersedes must be non-empty when provided")
+        for field_name in ("actor_id", "source_id", "target_id", "session_id", "delivery_id"):
+            value = getattr(self, field_name)
+            if value is not None and (not value.strip() or len(value) > 512):
+                raise ValueError(f"{field_name} must be a bounded non-empty value when provided")
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)

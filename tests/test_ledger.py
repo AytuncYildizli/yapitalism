@@ -79,6 +79,21 @@ class LedgerTests(unittest.TestCase):
                 path.chmod(0o600)
                 self.assertEqual(ledger.verify().reason, reason)
 
+    def test_manifest_is_derived_from_verified_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = JsonlLedger(Path(directory) / "events.jsonl")
+            ledger.append(evidence("evt-1", command_id="cmd-1"))
+            ledger.append(evidence("evt-2", command_id="cmd-2"))
+
+            manifest = ledger.manifest()
+            self.assertTrue(manifest.valid)
+            self.assertEqual(manifest.schema_version, 1)
+            self.assertEqual(manifest.projection_version, 1)
+            self.assertEqual(manifest.event_count, 2)
+            self.assertEqual(manifest.command_count, 2)
+            self.assertEqual((manifest.first_sequence, manifest.last_sequence), (1, 2))
+            self.assertEqual(manifest.chain_head, ledger.read()[-1]["event_hash"])
+
     def test_verify_detects_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "events.jsonl"
