@@ -228,6 +228,8 @@ class SupersetAdapterTests(unittest.TestCase):
         self.assertIs(evidence.leg, Leg.CAPTURE)
         self.assertIs(evidence.state, LegState.PENDING)
         self.assertEqual(evidence.reason, "context_only")
+        self.assertEqual(evidence.source_id, "adapter:superset")
+        self.assertEqual(evidence.target_id, "terminal:terminal-1")
         self.assertNotIn("private terminal text", repr(snapshot))
         self.assertNotIn("private terminal text", evidence.evidence_ref)
         self.assertEqual(
@@ -362,7 +364,11 @@ class SupersetAdapterTests(unittest.TestCase):
             )
         self.assertTrue(sent.dispatched)
         self.assertFalse(sent.prompt_verified)
-        self.assertEqual(sent.to_evidence("a").reason, "prompt_not_verified")
+        evidence = sent.to_evidence("a")
+        self.assertEqual(evidence.reason, "prompt_not_verified")
+        self.assertEqual(evidence.source_id, "adapter:superset")
+        self.assertEqual(evidence.target_id, "terminal:terminal-1")
+        self.assertEqual(evidence.delivery_id, DELIVERY_ID)
 
     def test_contradictory_injected_envelopes_fail_closed(self) -> None:
         responses = iter(
@@ -384,6 +390,33 @@ class SupersetAdapterTests(unittest.TestCase):
                         expected_revision=9,
                         client_token=f"token-{index}",
                         confirm=True,
+                    )
+
+    def test_non_injected_delivery_id_is_bounded_before_evidence_mapping(self) -> None:
+        responses = iter(
+            [
+                send_result(
+                    phase="duplicate_ignored",
+                    submit_sent=False,
+                    duplicate=True,
+                    delivery_id="",
+                    revision_after=None,
+                ),
+                send_result(
+                    phase="duplicate_ignored",
+                    submit_sent=False,
+                    duplicate=True,
+                    delivery_id="x" * 513,
+                    revision_after=None,
+                ),
+            ]
+        )
+        with FakeTrpcServer(lambda *_: next(responses)) as server:
+            adapter = SupersetAdapter(self.config(server.endpoint))
+            for index in range(2):
+                with self.subTest(index=index), self.assertRaisesRegex(TrpcError, "deliveryId"):
+                    adapter.dispatch(
+                        "work", expected_revision=9, client_token=f"bounded-{index}", confirm=True
                     )
 
     def test_dispatch_text_has_utf8_byte_bound_before_network(self) -> None:
@@ -498,6 +531,8 @@ class SupersetAdapterTests(unittest.TestCase):
         self.assertTrue(observed.observed)
         self.assertEqual(observed.attempts, 2)
         self.assertEqual(observed.last_revision, 11)
+        self.assertEqual(observed.evidence.source_id, "adapter:superset")
+        self.assertEqual(observed.evidence.target_id, "terminal:terminal-1")
         with self.assertRaises(ValueError):
             SupersetAdapter(self.config("http://127.0.0.1:9999/trpc")).validate_canary(
                 "CANARY-123", baseline_text="", submitted_text=""
@@ -526,6 +561,8 @@ class SupersetAdapterTests(unittest.TestCase):
         self.assertEqual(missed.attempts, 3)
         self.assertIs(missed.evidence.state, LegState.FAILED)
         self.assertEqual(missed.evidence.reason, "canary_timeout")
+        self.assertEqual(missed.evidence.source_id, "adapter:superset")
+        self.assertEqual(missed.evidence.target_id, "terminal:terminal-1")
 
     def test_structured_canary_accepts_common_acknowledgement_boundaries(self) -> None:
         adapter = SupersetAdapter(self.config("http://127.0.0.1:1/trpc"))
