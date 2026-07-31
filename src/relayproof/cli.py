@@ -29,6 +29,11 @@ def _event_from_raw(raw: dict[str, object], *, command_id: str | None = None) ->
         evidence_ref=str(raw.get("evidence_ref", "")),
         sequence=sequence_raw,
         supersedes=(str(raw["supersedes"]) if raw.get("supersedes") is not None else None),
+        actor_id=(str(raw["actor_id"]) if raw.get("actor_id") is not None else None),
+        source_id=(str(raw["source_id"]) if raw.get("source_id") is not None else None),
+        target_id=(str(raw["target_id"]) if raw.get("target_id") is not None else None),
+        session_id=(str(raw["session_id"]) if raw.get("session_id") is not None else None),
+        delivery_id=(str(raw["delivery_id"]) if raw.get("delivery_id") is not None else None),
     )
 
 
@@ -79,6 +84,28 @@ def ledger_verify(ledger_path: Path) -> int:
         )
     )
     return 0 if result.valid else 2
+
+
+def ledger_manifest(ledger_path: Path) -> int:
+    manifest = JsonlLedger(ledger_path).manifest()
+    print(
+        json.dumps(
+            {
+                "authority": manifest.authority,
+                "valid": manifest.valid,
+                "schema_version": manifest.schema_version,
+                "projection_version": manifest.projection_version,
+                "event_count": manifest.event_count,
+                "command_count": manifest.command_count,
+                "first_sequence": manifest.first_sequence,
+                "last_sequence": manifest.last_sequence,
+                "chain_head": manifest.chain_head,
+                "verification_reason": manifest.verification_reason,
+            },
+            sort_keys=True,
+        )
+    )
+    return 0 if manifest.valid else 2
 
 
 def ledger_migrate(source_path: Path, output_path: Path) -> int:
@@ -315,6 +342,8 @@ def build_parser() -> argparse.ArgumentParser:
     ledger_commands = ledger_parser.add_subparsers(dest="ledger_command", required=True)
     ledger_verify_parser = ledger_commands.add_parser("verify", help="verify sequence and hash-chain integrity")
     ledger_verify_parser.add_argument("--ledger", type=Path, default=_state_root() / "events.jsonl")
+    ledger_manifest_parser = ledger_commands.add_parser("manifest", help="summarize authority and projection state")
+    ledger_manifest_parser.add_argument("--ledger", type=Path, default=_state_root() / "events.jsonl")
     ledger_migrate_parser = ledger_commands.add_parser("migrate", help="copy a legacy ledger into a new chained file")
     ledger_migrate_parser.add_argument("--source", type=Path, required=True)
     ledger_migrate_parser.add_argument("--output", type=Path, required=True)
@@ -351,6 +380,8 @@ def main(argv: list[str] | None = None) -> int:
         return receipt_show(args.ledger, args.command_id)
     if args.command == "ledger" and args.ledger_command == "verify":
         return ledger_verify(args.ledger)
+    if args.command == "ledger" and args.ledger_command == "manifest":
+        return ledger_manifest(args.ledger)
     if args.command == "ledger" and args.ledger_command == "migrate":
         return ledger_migrate(args.source, args.output)
     if args.command == "superset" and args.superset_command == "status":

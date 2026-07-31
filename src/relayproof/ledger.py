@@ -16,6 +16,20 @@ _LEDGER_FIELDS = frozenset({"schema_version", "sequence", "prev_hash", "event_ha
 
 
 @dataclass(frozen=True, slots=True)
+class LedgerManifest:
+    authority: str
+    valid: bool
+    schema_version: int
+    projection_version: int
+    event_count: int
+    command_count: int
+    first_sequence: int | None
+    last_sequence: int | None
+    chain_head: str
+    verification_reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class LedgerVerification:
     valid: bool
     event_count: int
@@ -95,6 +109,41 @@ class JsonlLedger:
             finally:
                 os.close(descriptor)
 
+    def manifest(self) -> LedgerManifest:
+        try:
+            rows = self.read()
+        except (OSError, ValueError):
+            rows = ()
+            verification = LedgerVerification(False, 0, "", "ledger_unreadable")
+        else:
+            verification = self._verify_rows(rows)
+        if not verification.valid:
+            return LedgerManifest(
+                authority="jsonl_ledger",
+                valid=False,
+                schema_version=1,
+                projection_version=1,
+                event_count=verification.event_count,
+                command_count=0,
+                first_sequence=None,
+                last_sequence=None,
+                chain_head=verification.chain_head,
+                verification_reason=verification.reason,
+            )
+        rows = self.read()
+        commands = {str(row["command_id"]) for row in rows if row.get("command_id") is not None}
+        return LedgerManifest(
+            authority="jsonl_ledger",
+            valid=True,
+            schema_version=1,
+            projection_version=1,
+            event_count=len(rows),
+            command_count=len(commands),
+            first_sequence=(1 if rows else None),
+            last_sequence=(len(rows) if rows else None),
+            chain_head=verification.chain_head,
+        )
+
     def require_appendable(self) -> None:
         result = self.verify()
         if not result.valid:
@@ -103,8 +152,12 @@ class JsonlLedger:
     def verify(self) -> LedgerVerification:
         try:
             rows = self.read()
-        except (OSError, PermissionError, ValueError, json.JSONDecodeError):
+        except (OSError, ValueError):
             return LedgerVerification(False, 0, "", "ledger_unreadable")
+        return self._verify_rows(rows)
+
+    @staticmethod
+    def _verify_rows(rows: tuple[dict[str, object], ...]) -> LedgerVerification:
         previous_hash = ""
         for expected_sequence, row in enumerate(rows, start=1):
             if row.get("schema_version") != 1:

@@ -356,6 +356,29 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(main(["ledger", "verify", "--ledger", str(path)]), 2)
             self.assertIn("event_hash_mismatch", output.getvalue())
 
+    def test_ledger_manifest_reports_authority_without_event_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "events.jsonl"
+            JsonlLedger(path).append(
+                EvidenceEvent(
+                    event_id="evt-1",
+                    command_id="cmd-secret",
+                    leg=Leg.CAPTURE,
+                    state=LegState.PENDING,
+                    kind="terminal.snapshot",
+                    provenance=Provenance.API,
+                    target_id="terminal:private",
+                )
+            )
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(main(["ledger", "manifest", "--ledger", str(path)]), 0)
+            rendered = output.getvalue()
+            self.assertIn('"authority": "jsonl_ledger"', rendered)
+            self.assertIn('"command_count": 1', rendered)
+            self.assertNotIn("cmd-secret", rendered)
+            self.assertNotIn("terminal:private", rendered)
+
     def test_legacy_ledger_blocks_send_before_adapter_activity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

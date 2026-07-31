@@ -232,10 +232,13 @@ class TerminalSnapshot:
             event_id=str(uuid.uuid4()),
             command_id=command_id,
             leg=Leg.CAPTURE,
-            state=LegState.SUCCEEDED,
+            state=LegState.PENDING,
             kind="terminal.snapshot",
             provenance=Provenance.API,
+            reason="context_only",
             evidence_ref=f"terminal:{self.terminal_id}:revision:{self.revision}",
+            source_id="adapter:superset",
+            target_id=f"terminal:{self.terminal_id}",
         )
 
 
@@ -291,6 +294,9 @@ class DispatchResult:
             provenance=Provenance.API,
             reason=reason,
             evidence_ref=evidence_ref,
+            source_id="adapter:superset",
+            target_id=f"terminal:{self.terminal_id}",
+            delivery_id=self.delivery_id,
         )
 
 
@@ -574,6 +580,8 @@ class SupersetAdapter:
                     kind="canary.observed",
                     provenance=Provenance.TERMINAL_DIFF,
                     evidence_ref=f"terminal:{snapshot.terminal_id}:revision:{snapshot.revision}",
+                    source_id="adapter:superset",
+                    target_id=f"terminal:{snapshot.terminal_id}",
                 )
                 return CanaryResult(True, attempts, last_revision, evidence)
             now = clock()
@@ -589,6 +597,8 @@ class SupersetAdapter:
             provenance=Provenance.TERMINAL_DIFF,
             reason="canary_timeout",
             evidence_ref=f"terminal:{self.config.terminal_id}:revision:{last_revision}",
+            source_id="adapter:superset",
+            target_id=f"terminal:{self.config.terminal_id}",
         )
         return CanaryResult(False, attempts, last_revision, evidence)
 

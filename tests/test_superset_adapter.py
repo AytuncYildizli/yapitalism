@@ -220,6 +220,8 @@ class SupersetAdapterTests(unittest.TestCase):
         self.assertEqual(snapshot.revision, 7)
         evidence = snapshot.to_evidence("cmd-1")
         self.assertIs(evidence.leg, Leg.CAPTURE)
+        self.assertIs(evidence.state, LegState.PENDING)
+        self.assertEqual(evidence.reason, "context_only")
         self.assertNotIn("private terminal text", repr(snapshot))
         self.assertNotIn("private terminal text", evidence.evidence_ref)
         self.assertEqual(

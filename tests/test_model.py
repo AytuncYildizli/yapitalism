@@ -69,6 +69,40 @@ class ReceiptTests(unittest.TestCase):
         self.assertIs(receipt.status, Status.YELLOW)
         self.assertIn("handoff_destination", receipt.summary())
 
+    def test_identity_dimensions_persist_without_changing_proof_authority(self) -> None:
+        identity_event = EvidenceEvent(
+            event_id="evt-identity",
+            command_id="cmd-1",
+            leg=Leg.DISPATCH,
+            state=LegState.PENDING,
+            kind="terminal.send.pending",
+            provenance=Provenance.API,
+            actor_id="operator:efe",
+            source_id="cli:local",
+            target_id="terminal:one",
+            session_id="session:one",
+            delivery_id="delivery:one",
+        )
+        receipt = Receipt("cmd-1")
+        receipt.record(identity_event)
+
+        self.assertIs(receipt.status, Status.YELLOW)
+        self.assertEqual(identity_event.as_dict()["actor_id"], "operator:efe")
+        self.assertEqual(identity_event.as_dict()["target_id"], "terminal:one")
+
+    def test_empty_or_oversized_identity_dimension_is_rejected(self) -> None:
+        for actor_id in (" ", "x" * 513):
+            with self.assertRaisesRegex(ValueError, "actor_id"):
+                EvidenceEvent(
+                    event_id="evt-identity",
+                    command_id="cmd-1",
+                    leg=Leg.CAPTURE,
+                    state=LegState.PENDING,
+                    kind="terminal.snapshot",
+                    provenance=Provenance.API,
+                    actor_id=actor_id,
+                )
+
     def test_duplicate_event_is_idempotent(self) -> None:
         receipt = Receipt("cmd-1")
         evidence = event(1, Leg.CAPTURE)
