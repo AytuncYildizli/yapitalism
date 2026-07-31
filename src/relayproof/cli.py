@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import uuid
 from pathlib import Path
 from typing import Any
 
 from .adapters.superset import SupersetAdapter, SupersetConfig
-
+from .claims import ConfirmationClaimStore
+from .ledger import JsonlLedger
 from .model import EvidenceEvent, Leg, LegState, Provenance, Receipt
 
 
@@ -37,6 +39,18 @@ def receipt_from_fixture(payload: dict[str, Any]) -> Receipt:
 def doctor(path: Path) -> int:
     payload = json.loads(path.read_text(encoding="utf-8"))
     receipt = receipt_from_fixture(payload)
+    print(receipt.summary())
+    return 0
+
+
+def _state_root() -> Path:
+    configured = os.environ.get("XDG_STATE_HOME")
+    return (Path(configured) if configured else Path.home() / ".local" / "state") / "relayproof"
+
+
+def receipt_show(ledger_path: Path, command_id: str) -> int:
+    rows = [row for row in JsonlLedger(ledger_path).read() if row.get("command_id") == command_id]
+    receipt = receipt_from_fixture({"command_id": command_id, "events": rows})
     print(receipt.summary())
     return 0
 
@@ -72,6 +86,8 @@ def superset_send(args: argparse.Namespace) -> int:
         )
         return 2
     adapter = SupersetAdapter(SupersetConfig.from_manifest(args.manifest))
+    ledger = JsonlLedger(args.ledger)
+    claims = ConfirmationClaimStore(args.claim_dir)
     if not args.confirm_send:
         dispatched = adapter.dispatch(
             args.text,
@@ -79,6 +95,14 @@ def superset_send(args: argparse.Namespace) -> int:
             client_token=command_id,
             confirm=False,
         )
+        claims.issue(
+            client_token=command_id,
+            command_id=command_id,
+            text=args.text,
+            expected_revision=args.expect_revision,
+            terminal_id=adapter.config.terminal_id,
+        )
+        ledger.append(dispatched.to_evidence(command_id))
         print(
             json.dumps(
                 {
@@ -114,12 +138,19 @@ def superset_send(args: argparse.Namespace) -> int:
         baseline_text=baseline.text,
         submitted_text=args.text,
     )
+    command_id = claims.consume(
+        client_token=command_id,
+        text=args.text,
+        expected_revision=baseline.revision,
+        terminal_id=adapter.config.terminal_id,
+    )
     dispatched = adapter.dispatch(
         args.text,
         expected_revision=baseline.revision,
-        client_token=command_id,
+        client_token=args.client_token,
         confirm=True,
     )
+    ledger.append(dispatched.to_evidence(command_id))
     if not dispatched.dispatched:
         print(
             json.dumps(
@@ -141,6 +172,7 @@ def superset_send(args: argparse.Namespace) -> int:
         timeout=args.canary_timeout,
         poll_interval=args.poll_interval,
     )
+    ledger.append(canary.evidence)
     print(
         json.dumps(
             {
@@ -162,6 +194,12 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser = subcommands.add_parser("doctor", help="project a scrubbed fixture")
     doctor_parser.add_argument("fixture", type=Path)
 
+    receipt_parser = subcommands.add_parser("receipt", help="project persisted receipt evidence")
+    receipt_commands = receipt_parser.add_subparsers(dest="receipt_command", required=True)
+    receipt_show_parser = receipt_commands.add_parser("show", help="show one projected receipt")
+    receipt_show_parser.add_argument("command_id")
+    receipt_show_parser.add_argument("--ledger", type=Path, default=_state_root() / "events.jsonl")
+
     superset_parser = subcommands.add_parser("superset", help="operate a Superset terminal")
     superset_commands = superset_parser.add_subparsers(dest="superset_command", required=True)
     status_parser = superset_commands.add_parser("status", help="read terminal snapshot metadata")
@@ -174,6 +212,8 @@ def build_parser() -> argparse.ArgumentParser:
     send_parser.add_argument("--canary", required=True)
     send_parser.add_argument("--expect-revision", required=True, type=int)
     send_parser.add_argument("--client-token")
+    send_parser.add_argument("--ledger", type=Path, default=_state_root() / "events.jsonl")
+    send_parser.add_argument("--claim-dir", type=Path, default=_state_root() / "claims")
     send_parser.add_argument(
         "--confirm-send",
         action="store_true",
@@ -188,6 +228,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "doctor":
         return doctor(args.fixture)
+    if args.command == "receipt" and args.receipt_command == "show":
+        return receipt_show(args.ledger, args.command_id)
     if args.command == "superset" and args.superset_command == "status":
         return superset_status(args.manifest, args.max_lines)
     if args.command == "superset" and args.superset_command == "send":

@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from relayproof.cli import doctor, main
+from relayproof.ledger import JsonlLedger
 
 
 class CliTests(unittest.TestCase):
@@ -106,6 +107,56 @@ class CliTests(unittest.TestCase):
         self.assertIn('"confirmation_required": true', rendered)
         self.assertNotIn("private command", rendered)
         self.assertNotIn("top-secret", rendered)
+
+    def test_superset_dry_run_persists_receipt_and_confirmation_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.json"
+            ledger_path = root / "events.jsonl"
+            claim_dir = root / "claims"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "endpoint": "http://127.0.0.1:1/trpc",
+                        "bearer_token": "top-secret",
+                        "workspace_id": "workspace-1",
+                        "terminal_id": "terminal-1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest.chmod(0o600)
+            output = StringIO()
+            with redirect_stdout(output):
+                code = main(
+                    [
+                        "superset",
+                        "send",
+                        "--manifest",
+                        str(manifest),
+                        "--text",
+                        "private command",
+                        "--canary",
+                        "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF",
+                        "--expect-revision",
+                        "3",
+                        "--client-token",
+                        "stable-token",
+                        "--ledger",
+                        str(ledger_path),
+                        "--claim-dir",
+                        str(claim_dir),
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            rows = JsonlLedger(ledger_path).read()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["kind"], "terminal.send.dry_run")
+            self.assertNotIn("private command", ledger_path.read_text(encoding="utf-8"))
+            self.assertNotIn("top-secret", ledger_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(list(claim_dir.glob("*.json"))), 1)
+            self.assertIn('"command_id": "stable-token"', output.getvalue())
 
     def test_superset_confirmed_send_snapshots_and_rejects_revision_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
