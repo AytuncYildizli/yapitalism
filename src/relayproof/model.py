@@ -108,6 +108,8 @@ class Receipt:
     def latest_by_leg(self) -> dict[Leg, EvidenceEvent]:
         latest: dict[Leg, EvidenceEvent] = {}
         for event in self.effective_events():
+            if event.state is LegState.PENDING and event.reason == "context_only":
+                continue
             latest[event.leg] = event
         return latest
 

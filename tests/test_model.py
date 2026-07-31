@@ -103,6 +103,25 @@ class ReceiptTests(unittest.TestCase):
                     actor_id=actor_id,
                 )
 
+    def test_context_only_snapshot_cannot_downgrade_proven_capture(self) -> None:
+        receipt = Receipt("cmd-1")
+        for number, leg in enumerate(Leg, start=1):
+            receipt.record(event(number, leg, sequence=number))
+        receipt.record(
+            EvidenceEvent(
+                event_id="evt-context",
+                command_id="cmd-1",
+                leg=Leg.CAPTURE,
+                state=LegState.PENDING,
+                kind="terminal.snapshot",
+                provenance=Provenance.API,
+                reason="context_only",
+                sequence=10,
+            )
+        )
+
+        self.assertIs(receipt.status, Status.GREEN)
+
     def test_duplicate_event_is_idempotent(self) -> None:
         receipt = Receipt("cmd-1")
         evidence = event(1, Leg.CAPTURE)

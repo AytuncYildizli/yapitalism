@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from relayproof.ledger import JsonlLedger
 from relayproof.model import EvidenceEvent, Leg, LegState, Provenance
@@ -56,6 +58,26 @@ class LedgerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "different payload"):
                 ledger.append(evidence("evt-1", command_id="cmd-other"))
 
+    def test_duplicate_idempotency_treats_missing_optional_identity_as_none(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "events.jsonl"
+            ledger = JsonlLedger(path)
+            original = evidence("evt-1")
+            ledger.append(original)
+            row = dict(ledger.read()[0])
+            for key in ("actor_id", "source_id", "target_id", "session_id", "delivery_id"):
+                row.pop(key, None)
+            unhashed = {key: value for key, value in row.items() if key != "event_hash"}
+            row["event_hash"] = hashlib.sha256(
+                json.dumps(unhashed, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            path.write_text(json.dumps(row, sort_keys=True) + "\n", encoding="utf-8")
+            path.chmod(0o600)
+            self.assertTrue(ledger.verify().valid)
+
+            ledger.append(original)
+            self.assertEqual(len(ledger.read()), 1)
+
     def test_verify_names_schema_sequence_and_link_failures(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "events.jsonl"
@@ -85,7 +107,9 @@ class LedgerTests(unittest.TestCase):
             ledger.append(evidence("evt-1", command_id="cmd-1"))
             ledger.append(evidence("evt-2", command_id="cmd-2"))
 
-            manifest = ledger.manifest()
+            with patch.object(ledger, "read", wraps=ledger.read) as read_once:
+                manifest = ledger.manifest()
+            read_once.assert_called_once_with()
             self.assertTrue(manifest.valid)
             self.assertEqual(manifest.schema_version, 1)
             self.assertEqual(manifest.projection_version, 1)

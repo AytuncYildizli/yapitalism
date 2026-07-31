@@ -13,6 +13,9 @@ from .model import EvidenceEvent
 
 _MAX_LEDGER_BYTES = 64 * 1024 * 1024
 _LEDGER_FIELDS = frozenset({"schema_version", "sequence", "prev_hash", "event_hash"})
+_OPTIONAL_EVENT_FIELDS = frozenset(
+    {"supersedes", "actor_id", "source_id", "target_id", "session_id", "delivery_id"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +45,10 @@ def _canonical(payload: dict[str, object]) -> bytes:
 
 
 def _event_payload(row: dict[str, object]) -> dict[str, object]:
-    return {key: value for key, value in row.items() if key not in _LEDGER_FIELDS}
+    payload = {key: value for key, value in row.items() if key not in _LEDGER_FIELDS}
+    for field_name in _OPTIONAL_EVENT_FIELDS:
+        payload.setdefault(field_name, None)
+    return payload
 
 
 class JsonlLedger:
@@ -68,7 +74,7 @@ class JsonlLedger:
             for existing in rows:
                 if existing.get("event_id") != event.event_id:
                     continue
-                if _event_payload(existing) == candidate:
+                if _event_payload(existing) == _event_payload(candidate):
                     return
                 raise ValueError("event_id is already bound to a different payload")
             previous_hash = str(rows[-1].get("event_hash", "")) if rows else ""
@@ -130,7 +136,6 @@ class JsonlLedger:
                 chain_head=verification.chain_head,
                 verification_reason=verification.reason,
             )
-        rows = self.read()
         commands = {str(row["command_id"]) for row in rows if row.get("command_id") is not None}
         return LedgerManifest(
             authority="jsonl_ledger",

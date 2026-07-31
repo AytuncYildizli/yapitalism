@@ -474,6 +474,8 @@ class SupersetAdapter:
             raise TrpcError("Superset response field target was invalid")
         runtime = _required_enum(cast(dict[str, Any], target), "runtime", _RUNTIMES)
         delivery_id = _optional_string(data, "deliveryId")
+        if delivery_id is not None and (not delivery_id.strip() or len(delivery_id) > 512):
+            raise TrpcError("Superset response field deliveryId was not a bounded non-empty string")
         submit_sent = _required_bool(data, "submitSent")
         duplicate = _required_bool(data, "duplicate")
         revision_before = _required_nonnegative_int(data, "revisionBefore")
