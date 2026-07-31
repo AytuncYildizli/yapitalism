@@ -30,8 +30,7 @@ Build a real, local-first Superset host adapter that can read terminal snapshots
 
 ## Contracts
 
-- Host source of truth:
-  `/Users/aytuncyildizli/hermes-workspace/research-intake/superset-voice-current-main/packages/host-service/src/trpc/router/terminal/terminal.ts`
+- Host source of truth: the operator-reviewed Superset host-service terminal tRPC router.
 - Live host manifests remain outside Git and are read only when an operator passes a path.
 - `terminal.snapshot` is read-only.
 - `terminal.send` is side-effecting and must receive: terminal/workspace ids, exact text, submit intent, unique client token, empty-prompt policy, repeat policy, and expected revision.

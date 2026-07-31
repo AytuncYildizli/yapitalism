@@ -4,7 +4,7 @@
 
 RelayProof is a local-first receipt and observability harness for commands that cross opaque voice, remote-agent, and terminal boundaries. It tells you what is proven, what is merely observed, and where a command stopped—without pretending to control closed-source voice clients.
 
-> Private MVP. No production deployment, external messaging, or closed-client automation is included.
+> Public pre-alpha. No production deployment, external messaging, or closed-client automation is included.
 
 ## Why
 
@@ -82,6 +82,16 @@ PYTHONPATH=src python3 -m relayproof.cli superset send \
 # Add: --client-token <command_id-from-dry-run> --confirm-send
 ```
 
+Dry runs persist a mode-`0600`, single-use confirmation claim bound to the exact
+command hash, target terminal, and reviewed revision. Confirmed sends consume that
+claim before network dispatch. Receipt events default to
+`$XDG_STATE_HOME/relayproof/events.jsonl` (or `~/.local/state/relayproof/events.jsonl`)
+and contain bounded metadata only. Project one receipt with:
+
+```bash
+PYTHONPATH=src python3 -m relayproof.cli receipt show <command_id>
+```
+
 The confirmed path snapshots immediately before dispatch, rejects a changed revision, sends `requireEmptyPrompt=true`, `allowRepeat=false`, a stable `clientToken`, and the exact `expectRevision`, then polls snapshots against a monotonic deadline. HTTP 2xx, PTY revision movement, Superset `verified`, and prompt echo never prove acceptance. Only a command-correlated post-dispatch canary can do that.
 
 Security boundaries: loopback-only `/trpc`, no redirects or ambient proxies, bounded responses, strict `0600` non-symlink manifests, redacted bearer/token handling, and no automatic POST retry after an ambiguous transport failure.
@@ -124,4 +134,4 @@ Raw transcripts and credentials do not belong in this repository. Ledgers store 
 
 ## Status
 
-`0.1.0-dev` — professional scaffold with a tested receipt core. The Superset adapter and device probes remain roadmap work.
+`0.1.0-dev` — public pre-alpha with a tested receipt core and Superset adapter. Controlled device probes and live-journey evidence remain roadmap work.

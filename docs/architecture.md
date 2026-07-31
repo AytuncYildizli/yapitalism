@@ -15,8 +15,10 @@ The legs have separate lifetimes. Audio-session health is a parallel channel obs
 - `model.py`: immutable evidence events and deterministic status projection.
 - `canary.py`: ANSI/line-wrap tolerant canary matching.
 - `ledger.py`: append-only local evidence ledger with restrictive permissions.
-- `cli.py`: human-readable doctor output over scrubbed fixtures.
-- future `adapters/`: Superset MCP, replay, and approved notification surfaces.
+- `claims.py`: owner-only, expiring, single-use confirmation claims bound to exact dispatch content.
+- `cli.py`: doctor output, persisted receipt projection, and explicit Superset operations.
+- `adapters/superset/`: fail-closed local Superset tRPC integration.
+- future adapters: replay and explicitly approved notification surfaces.
 
 ## Evidence provenance
 
