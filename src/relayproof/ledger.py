@@ -1,15 +1,38 @@
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import os
+import stat
+from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from .model import EvidenceEvent
 
+_MAX_LEDGER_BYTES = 64 * 1024 * 1024
+_LEDGER_FIELDS = frozenset({"schema_version", "sequence", "prev_hash", "event_hash"})
+
+
+@dataclass(frozen=True, slots=True)
+class LedgerVerification:
+    valid: bool
+    event_count: int
+    chain_head: str
+    reason: str = ""
+
+
+def _canonical(payload: dict[str, object]) -> bytes:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _event_payload(row: dict[str, object]) -> dict[str, object]:
+    return {key: value for key, value in row.items() if key not in _LEDGER_FIELDS}
+
 
 class JsonlLedger:
-    """Append-only local evidence ledger with restrictive file permissions."""
+    """Append-only local evidence ledger with restrictive permissions and hash chaining."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -19,21 +42,110 @@ class JsonlLedger:
         os.chmod(self.path.parent, 0o700)
         descriptor = os.open(
             self.path,
-            os.O_APPEND | os.O_CREAT | os.O_WRONLY,
+            os.O_APPEND | os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW,
             0o600,
         )
         try:
-            payload = json.dumps(event.as_dict(), sort_keys=True, separators=(",", ":"))
-            os.write(descriptor, (payload + "\n").encode("utf-8"))
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            self._validate_descriptor(descriptor)
+            rows = self._read_descriptor(descriptor)
+            candidate = cast(dict[str, object], event.as_dict())
+            candidate.pop("sequence", None)
+            for existing in rows:
+                if existing.get("event_id") != event.event_id:
+                    continue
+                if _event_payload(existing) == candidate:
+                    return
+                raise ValueError("event_id is already bound to a different payload")
+            previous_hash = str(rows[-1].get("event_hash", "")) if rows else ""
+            if rows:
+                last_sequence = rows[-1].get("sequence")
+                if isinstance(last_sequence, bool) or not isinstance(last_sequence, int):
+                    raise ValueError("existing ledger requires migration before append")
+                sequence = last_sequence + 1
+            else:
+                sequence = 1
+            row: dict[str, object] = {
+                **candidate,
+                "schema_version": 1,
+                "sequence": sequence,
+                "prev_hash": previous_hash,
+            }
+            row["event_hash"] = hashlib.sha256(_canonical(row)).hexdigest()
+            os.write(descriptor, _canonical(row) + b"\n")
+            os.fsync(descriptor)
         finally:
-            os.close(descriptor)
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
         os.chmod(self.path, 0o600)
 
     def read(self) -> tuple[dict[str, object], ...]:
         if not self.path.exists():
             return ()
+        descriptor = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_SH)
+            self._validate_descriptor(descriptor)
+            return self._read_descriptor(descriptor)
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+
+    def verify(self) -> LedgerVerification:
+        try:
+            rows = self.read()
+        except (OSError, PermissionError, ValueError, json.JSONDecodeError):
+            return LedgerVerification(False, 0, "", "ledger_unreadable")
+        previous_hash = ""
+        for expected_sequence, row in enumerate(rows, start=1):
+            if row.get("schema_version") != 1:
+                return LedgerVerification(False, len(rows), previous_hash, "schema_version_mismatch")
+            if row.get("sequence") != expected_sequence:
+                return LedgerVerification(False, len(rows), previous_hash, "sequence_mismatch")
+            if row.get("prev_hash") != previous_hash:
+                return LedgerVerification(False, len(rows), previous_hash, "previous_hash_mismatch")
+            claimed_hash = row.get("event_hash")
+            unhashed = {key: value for key, value in row.items() if key != "event_hash"}
+            calculated_hash = hashlib.sha256(_canonical(unhashed)).hexdigest()
+            if claimed_hash != calculated_hash:
+                return LedgerVerification(False, len(rows), previous_hash, "event_hash_mismatch")
+            previous_hash = calculated_hash
+        return LedgerVerification(True, len(rows), previous_hash)
+
+    @staticmethod
+    def _validate_descriptor(descriptor: int) -> None:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode) or details.st_uid != os.geteuid():
+            raise PermissionError("ledger must be an owner-controlled regular file")
+        if stat.S_IMODE(details.st_mode) != 0o600:
+            raise PermissionError("ledger must have mode 0600")
+        if details.st_size > _MAX_LEDGER_BYTES:
+            raise ValueError("ledger exceeded size limit")
+
+    @staticmethod
+    def _read_descriptor(descriptor: int) -> tuple[dict[str, object], ...]:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        chunks: list[bytes] = []
+        remaining = _MAX_LEDGER_BYTES + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > _MAX_LEDGER_BYTES:
+            raise ValueError("ledger exceeded size limit")
         rows: list[dict[str, object]] = []
-        for line in self.path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                rows.append(cast(dict[str, object], json.loads(line)))
+        for line in raw.splitlines():
+            if not line.strip():
+                continue
+            payload: Any = json.loads(line)
+            if not isinstance(payload, dict):
+                raise ValueError("ledger row must be an object")
+            rows.append(cast(dict[str, object], payload))
         return tuple(rows)

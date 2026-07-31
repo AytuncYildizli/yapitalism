@@ -51,6 +51,8 @@ class EvidenceEvent:
     )
     reason: str = ""
     evidence_ref: str = ""
+    sequence: int | None = None
+    supersedes: str | None = None
 
     def __post_init__(self) -> None:
         if not self.event_id.strip() or not self.command_id.strip() or not self.kind.strip():
@@ -63,6 +65,10 @@ class EvidenceEvent:
             and self.kind not in _ACCEPTANCE_KINDS
         ):
             raise ValueError("accept requires canary.observed or agent.acknowledged")
+        if self.sequence is not None and self.sequence <= 0:
+            raise ValueError("sequence must be positive when provided")
+        if self.supersedes is not None and not self.supersedes.strip():
+            raise ValueError("supersedes must be non-empty when provided")
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -92,9 +98,24 @@ class Receipt:
 
     def latest_by_leg(self) -> dict[Leg, EvidenceEvent]:
         latest: dict[Leg, EvidenceEvent] = {}
-        for event in self._events:
+        for event in self.effective_events():
             latest[event.leg] = event
         return latest
+
+    def effective_events(self) -> tuple[EvidenceEvent, ...]:
+        indexed = list(enumerate(self._events))
+        ordered = [
+            event
+            for _, event in sorted(
+                indexed,
+                key=lambda pair: (
+                    pair[1].sequence if pair[1].sequence is not None else pair[0] + 1,
+                    pair[0],
+                ),
+            )
+        ]
+        superseded = {event.supersedes for event in ordered if event.supersedes is not None}
+        return tuple(event for event in ordered if event.event_id not in superseded)
 
     @property
     def status(self) -> Status:
@@ -112,7 +133,7 @@ class Receipt:
 
     @property
     def failed_event(self) -> EvidenceEvent | None:
-        for event in reversed(self._events):
+        for event in reversed(self.effective_events()):
             if event.state is LegState.FAILED:
                 return event
         return None
