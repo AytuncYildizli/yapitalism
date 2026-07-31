@@ -34,3 +34,31 @@ class LedgerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LedgerSymlinkTests(unittest.TestCase):
+    def test_append_refuses_a_symlinked_ledger(self) -> None:
+        """The ledger is the evidence of record; it must not be redirected.
+
+        Without O_NOFOLLOW an append writes into the link target and the mode
+        fix lands on that target instead, corrupting an unrelated file while
+        leaving no ledger at the intended path.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            victim = root / "victim.txt"
+            victim.write_text("do not touch\n", encoding="utf-8")
+            path = root / "events.jsonl"
+            path.symlink_to(victim)
+
+            event = EvidenceEvent(
+                event_id="evt-1",
+                command_id="cmd-1",
+                leg=Leg.DISPATCH,
+                state=LegState.SUCCEEDED,
+                kind="terminal.send",
+                provenance=Provenance.API,
+            )
+            with self.assertRaises(OSError):
+                JsonlLedger(path).append(event)
+            self.assertEqual(victim.read_text(encoding="utf-8"), "do not touch\n")

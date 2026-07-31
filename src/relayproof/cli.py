@@ -10,7 +10,7 @@ from typing import Any
 from .adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
 from .claims import ConfirmationClaimStore
 from .ledger import JsonlLedger
-from .model import EvidenceEvent, Leg, LegState, Provenance, Receipt
+from .model import EvidenceEvent, Leg, LegState, Provenance, Receipt, Status
 
 
 def receipt_from_fixture(payload: dict[str, Any]) -> Receipt:
@@ -54,7 +54,14 @@ def receipt_show(ledger_path: Path, command_id: str) -> int:
         print(json.dumps({"command_id": command_id, "reason": "receipt_not_found"}, sort_keys=True))
         return 2
     receipt = receipt_from_fixture({"command_id": command_id, "events": rows})
-    print(receipt.summary())
+    summary = receipt.summary()
+    if receipt.status is Status.GREEN:
+        # The ledger stores events only. It carries no handoff fields, so this
+        # projection cannot rule out a claimed handoff with an unknown
+        # destination — which ADR-0001 says must block GREEN. Label the verdict
+        # as leg-only rather than letting it read as a full receipt.
+        summary += " handoff=unrecorded"
+    print(summary)
     return 0
 
 
@@ -169,7 +176,12 @@ def superset_send(args: argparse.Namespace) -> int:
         dispatched = adapter.dispatch(
             args.text,
             expected_revision=baseline.revision,
-            client_token=args.client_token,
+            # The token the claim authorized, not the raw argument. They are
+            # equal today only because issue() is always called with
+            # command_id == client_token; nothing enforces that, and a
+            # divergence would silently send Superset an idempotency key that
+            # no longer matches the receipt's identity.
+            client_token=command_id,
             confirm=True,
         )
     except TrpcError:

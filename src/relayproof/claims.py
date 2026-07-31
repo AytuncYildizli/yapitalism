@@ -23,6 +23,34 @@ def _token_key(client_token: str) -> str:
     return hashlib.sha256(client_token.encode("utf-8")).hexdigest()
 
 
+def _claim_expired(payload: dict[str, Any]) -> bool:
+    """True when a claim can no longer authorize a send.
+
+    Anything unparseable counts as expired rather than raising: a naive
+    timestamp compared against an aware `now()` would otherwise raise TypeError
+    instead of the domain error, and an unusable claim must never read as live.
+    """
+    expires_at = payload.get("expires_at")
+    if not isinstance(expires_at, str):
+        return True
+    try:
+        deadline = datetime.fromisoformat(expires_at)
+    except ValueError:
+        return True
+    if deadline.tzinfo is None:
+        return True
+    return deadline <= datetime.now(timezone.utc)
+
+
+def _fsync_dir(directory: Path) -> None:
+    """Persist a directory entry so a rename or create survives power loss."""
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 @dataclass(frozen=True, slots=True)
 class ConfirmationClaimStore:
     root: Path
@@ -58,27 +86,64 @@ class ConfirmationClaimStore:
         }
         encoded = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
         path = self._path(client_token)
-        if path.with_suffix(".consumed").exists():
+        consumed = path.with_suffix(".consumed")
+        if consumed.exists():
             raise ValueError("client_token confirmation claim was already consumed")
         try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            self._create(path, encoded)
         except FileExistsError:
-            existing = self._read(path)
-            binding_keys = (
-                "command_id",
-                "token_hash",
-                "payload_hash",
-                "expected_revision",
-                "terminal_id",
-            )
-            if any(existing.get(key) != payload[key] for key in binding_keys):
-                raise ValueError("client_token is already bound to a different claim") from None
-            return
+            try:
+                existing: dict[str, Any] | None = self._read(path)
+            except ValueError:
+                # Truncated or corrupt: a crash part-way through a previous
+                # issue must not wedge this token forever. PermissionError is
+                # deliberately not caught — wrong ownership or mode is an
+                # operator problem, not something to silently overwrite.
+                existing = None
+            if existing is not None:
+                binding_keys = (
+                    "command_id",
+                    "token_hash",
+                    "payload_hash",
+                    "expected_revision",
+                    "terminal_id",
+                )
+                if any(existing.get(key) != payload[key] for key in binding_keys):
+                    raise ValueError("client_token is already bound to a different claim") from None
+                if not _claim_expired(existing):
+                    return
+                # Expired: a stale claim is not a conflicting claim. Replacing it
+                # is what keeps a legitimate retry possible; returning here would
+                # report success while leaving a claim `consume` always rejects.
+            os.unlink(path)
+            self._create(path, encoded)
+        # The consumed marker can appear between the check above and the create,
+        # in which case that create resurrected a token that was already spent.
+        # The create is the atomic point, so the marker is re-checked after it.
+        if consumed.exists():
+            os.unlink(path)
+            raise ValueError("client_token confirmation claim was already consumed")
+
+    @staticmethod
+    def _create(path: Path, encoded: bytes) -> None:
+        """Create the claim exclusively, or raise FileExistsError.
+
+        A partially written claim is never published: any failure removes the
+        file, so the next issue sees no claim rather than an unusable one.
+        """
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         try:
-            os.write(fd, encoded)
+            written = 0
+            while written < len(encoded):
+                # os.write may write fewer bytes than requested.
+                written += os.write(fd, encoded[written:])
             os.fsync(fd)
-        finally:
+        except BaseException:
             os.close(fd)
+            os.unlink(path)
+            raise
+        os.close(fd)
+        _fsync_dir(path.parent)
 
     def consume(
         self,
@@ -101,14 +166,17 @@ class ConfirmationClaimStore:
         }
         if any(payload.get(key) != value for key, value in expected.items()):
             raise ValueError("confirmation claim does not match the requested dispatch")
-        expires_at = payload.get("expires_at")
-        if not isinstance(expires_at, str) or datetime.fromisoformat(expires_at) <= datetime.now(timezone.utc):
+        if _claim_expired(payload):
             raise ValueError("confirmation claim has expired")
         consumed = path.with_suffix(".consumed")
         try:
             os.replace(path, consumed)
         except FileNotFoundError:
             raise ValueError("confirmation claim is not available") from None
+        # Persist the rename before the caller dispatches. Without this a power
+        # loss can restore the live pathname, and the send becomes replayable —
+        # the exact single-use failure this store exists to prevent.
+        _fsync_dir(self.root)
         command_id = payload.get("command_id")
         if not isinstance(command_id, str) or not command_id:
             raise ValueError("confirmation claim is invalid")

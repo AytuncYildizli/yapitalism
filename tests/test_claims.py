@@ -114,3 +114,82 @@ class ConfirmationClaimStoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConfirmationClaimRecoveryTests(unittest.TestCase):
+    """A claim that cannot authorize a send must never wedge its token.
+
+    Both cases below previously left the token permanently unusable: `issue`
+    reported success while `consume` rejected the claim forever.
+    """
+
+    ARGS = {
+        "client_token": "stable-token",
+        "command_id": "cmd-1",
+        "text": "private command",
+        "expected_revision": 7,
+        "terminal_id": "terminal-1",
+    }
+
+    def consume(self, store: ConfirmationClaimStore) -> str:
+        return store.consume(
+            client_token="stable-token",
+            text="private command",
+            expected_revision=7,
+            terminal_id="terminal-1",
+        )
+
+    def test_expired_claim_is_replaced_by_reissue(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfirmationClaimStore(Path(directory))
+            store.issue(**self.ARGS)
+
+            path = next(Path(directory).glob("*.json"))
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["expires_at"] = "2000-01-01T00:00:00+00:00"
+            path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "expired"):
+                self.consume(store)
+
+            store.issue(**self.ARGS)
+            self.assertEqual(self.consume(store), "cmd-1")
+
+    def test_truncated_claim_is_replaced_by_reissue(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfirmationClaimStore(Path(directory))
+            store.issue(**self.ARGS)
+
+            # A crash part-way through a previous issue.
+            path = next(Path(directory).glob("*.json"))
+            path.write_text("", encoding="utf-8")
+
+            store.issue(**self.ARGS)
+            self.assertEqual(self.consume(store), "cmd-1")
+
+    def test_claim_consumed_during_issue_is_not_resurrected(self) -> None:
+        """The consumed marker is re-checked after the exclusive create.
+
+        A slow `issue` that passed the marker check before a concurrent
+        `consume` renamed the claim away would otherwise create a fresh live
+        claim for a token that was already spent.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfirmationClaimStore(Path(directory))
+            store.issue(**self.ARGS)
+            self.assertEqual(self.consume(store), "cmd-1")
+
+            with self.assertRaisesRegex(ValueError, "already consumed"):
+                store.issue(**self.ARGS)
+            self.assertEqual(list(Path(directory).glob("*.json")), [])
+
+    def test_naive_expiry_is_treated_as_expired_not_a_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfirmationClaimStore(Path(directory))
+            store.issue(**self.ARGS)
+            path = next(Path(directory).glob("*.json"))
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["expires_at"] = "2999-01-01T00:00:00"  # no timezone
+            path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "expired"):
+                self.consume(store)

@@ -509,9 +509,11 @@ class SupersetAdapter:
         submitted_text: str,
     ) -> None:
         _validate_canary(canary)
-        if _structured_canary_observed(submitted_text, canary):
+        # Deliberately the loose matcher: the guard must reject everything the
+        # observation path could ever accept, under any wrapping.
+        if _canary_could_appear(submitted_text, canary):
             raise ValueError("canary must not occur literally in submitted text")
-        if _structured_canary_observed(baseline_text, canary):
+        if _canary_could_appear(baseline_text, canary):
             raise ValueError("canary was already present in baseline")
 
     def await_canary(
@@ -593,10 +595,31 @@ class SupersetAdapter:
         return CanaryResult(False, attempts, last_revision, evidence)
 
 
+def _wrap_tolerant_pattern(canary: str) -> str:
+    """Match the canary even when a hard line wrap splits it mid-token."""
+    return r"\s*".join(re.escape(character) for character in canary)
+
+
+def _canary_could_appear(text: str, canary: str) -> bool:
+    """Loosest possible match, used only to REJECT text before dispatch.
+
+    This must stay strictly looser than `_structured_canary_observed`. The
+    boundary assertions there are whitespace-sensitive, so a terminal wrap can
+    manufacture a boundary that the submitted text did not have: text
+    `X<canary>` carries no boundary before the canary, but the pane renders it
+    as `X\\n<canary>`, which does. If the pre-dispatch guard were the stricter
+    of the two, that echo would satisfy acceptance on its own — a false GREEN
+    from prompt echo, which is the one outcome this project must never produce.
+
+    Dropping the boundary assertions here means the guard rejects anything that
+    could later be observed, in any wrapping.
+    """
+    return re.search(_wrap_tolerant_pattern(canary), strip_terminal_decoration(text)) is not None
+
+
 def _structured_canary_observed(terminal_text: str, canary: str) -> bool:
     normalized = strip_terminal_decoration(terminal_text)
-    wrapped_canary = r"\s*".join(re.escape(character) for character in canary)
-    pattern = rf"(?<![A-Z0-9_]){wrapped_canary}(?![A-Z0-9_])"
+    pattern = rf"(?<![A-Z0-9_]){_wrap_tolerant_pattern(canary)}(?![A-Z0-9_])"
     return re.search(pattern, normalized) is not None
 
 

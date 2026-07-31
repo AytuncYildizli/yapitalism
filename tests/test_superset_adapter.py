@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
-from relayproof.adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
+from relayproof.adapters.superset import (
+    SupersetAdapter,
+    SupersetConfig,
+    TrpcError,
+    _canary_could_appear,
+    _structured_canary_observed,
+)
 from relayproof.model import Leg, LegState
 
 CANARY = "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF"
@@ -545,3 +551,36 @@ class SupersetAdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CanaryGuardSymmetryTests(unittest.TestCase):
+    """The pre-dispatch guard must be looser than the acceptance matcher.
+
+    Acceptance tolerates a hard wrap inside the token, and its boundary
+    assertions are whitespace-sensitive. So a terminal can manufacture a
+    boundary that the submitted text never had: `X<canary>` has no boundary
+    before the canary, but the pane renders it as `X\n<canary>`, which does.
+    If the guard were the stricter of the two, that prompt echo alone would
+    satisfy acceptance — a false GREEN, which this project must never produce.
+    """
+
+    def test_guard_rejects_text_that_wrapping_would_turn_into_acceptance(self) -> None:
+        submitted = "X" + CANARY
+        wrapped_echo = "X\n" + CANARY
+
+        # The echo of that text WOULD be read as acceptance...
+        self.assertTrue(_structured_canary_observed(wrapped_echo, CANARY))
+        # ...so the guard must refuse to let it be dispatched at all.
+        self.assertTrue(_canary_could_appear(submitted, CANARY))
+
+    def test_guard_rejects_a_canary_split_by_a_wrap_in_submitted_text(self) -> None:
+        self.assertTrue(_canary_could_appear(CANARY[:10] + "\n" + CANARY[10:], CANARY))
+
+    def test_guard_allows_unrelated_text(self) -> None:
+        self.assertFalse(_canary_could_appear("deploy the service and report back", CANARY))
+
+    def test_acceptance_still_tolerates_a_wrapped_canary(self) -> None:
+        self.assertTrue(_structured_canary_observed(CANARY[:20] + "\n" + CANARY[20:], CANARY))
+
+    def test_acceptance_still_refuses_a_longer_token(self) -> None:
+        self.assertFalse(_structured_canary_observed(CANARY + "AB", CANARY))
