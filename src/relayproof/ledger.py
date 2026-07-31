@@ -103,6 +103,11 @@ class JsonlLedger:
             finally:
                 os.close(descriptor)
 
+    def require_appendable(self) -> None:
+        result = self.verify()
+        if not result.valid:
+            raise ValueError(f"ledger is not appendable: {result.reason}")
+
     def verify(self) -> LedgerVerification:
         try:
             rows = self.read()

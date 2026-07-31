@@ -133,7 +133,8 @@ class Receipt:
 
     @property
     def failed_event(self) -> EvidenceEvent | None:
-        for event in reversed(self.effective_events()):
+        latest = tuple(self.latest_by_leg().values())
+        for event in reversed(latest):
             if event.state is LegState.FAILED:
                 return event
         return None
