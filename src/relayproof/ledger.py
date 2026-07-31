@@ -15,7 +15,8 @@ class JsonlLedger:
         self.path = Path(path)
 
     def append(self, event: EvidenceEvent) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(self.path.parent, 0o700)
         descriptor = os.open(
             self.path,
             os.O_APPEND | os.O_CREAT | os.O_WRONLY,

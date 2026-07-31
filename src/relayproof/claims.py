@@ -58,11 +58,20 @@ class ConfirmationClaimStore:
         }
         encoded = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
         path = self._path(client_token)
+        if path.with_suffix(".consumed").exists():
+            raise ValueError("client_token confirmation claim was already consumed")
         try:
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         except FileExistsError:
             existing = self._read(path)
-            if existing != payload:
+            binding_keys = (
+                "command_id",
+                "token_hash",
+                "payload_hash",
+                "expected_revision",
+                "terminal_id",
+            )
+            if any(existing.get(key) != payload[key] for key in binding_keys):
                 raise ValueError("client_token is already bound to a different claim") from None
             return
         try:

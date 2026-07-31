@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .adapters.superset import SupersetAdapter, SupersetConfig
+from .adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
 from .claims import ConfirmationClaimStore
 from .ledger import JsonlLedger
 from .model import EvidenceEvent, Leg, LegState, Provenance, Receipt
@@ -50,6 +50,9 @@ def _state_root() -> Path:
 
 def receipt_show(ledger_path: Path, command_id: str) -> int:
     rows = [row for row in JsonlLedger(ledger_path).read() if row.get("command_id") == command_id]
+    if not rows:
+        print(json.dumps({"command_id": command_id, "reason": "receipt_not_found"}, sort_keys=True))
+        return 2
     receipt = receipt_from_fixture({"command_id": command_id, "events": rows})
     print(receipt.summary())
     return 0
@@ -95,13 +98,22 @@ def superset_send(args: argparse.Namespace) -> int:
             client_token=command_id,
             confirm=False,
         )
-        claims.issue(
-            client_token=command_id,
-            command_id=command_id,
-            text=args.text,
-            expected_revision=args.expect_revision,
-            terminal_id=adapter.config.terminal_id,
-        )
+        try:
+            claims.issue(
+                client_token=command_id,
+                command_id=command_id,
+                text=args.text,
+                expected_revision=args.expect_revision,
+                terminal_id=adapter.config.terminal_id,
+            )
+        except (ValueError, PermissionError, OSError):
+            print(
+                json.dumps(
+                    {"command_id": command_id, "dispatched": False, "reason": "confirmation_claim_rejected"},
+                    sort_keys=True,
+                )
+            )
+            return 2
         ledger.append(dispatched.to_evidence(command_id))
         print(
             json.dumps(
@@ -138,18 +150,48 @@ def superset_send(args: argparse.Namespace) -> int:
         baseline_text=baseline.text,
         submitted_text=args.text,
     )
-    command_id = claims.consume(
-        client_token=command_id,
-        text=args.text,
-        expected_revision=baseline.revision,
-        terminal_id=adapter.config.terminal_id,
-    )
-    dispatched = adapter.dispatch(
-        args.text,
-        expected_revision=baseline.revision,
-        client_token=args.client_token,
-        confirm=True,
-    )
+    try:
+        command_id = claims.consume(
+            client_token=command_id,
+            text=args.text,
+            expected_revision=baseline.revision,
+            terminal_id=adapter.config.terminal_id,
+        )
+    except (ValueError, PermissionError, OSError):
+        print(
+            json.dumps(
+                {"command_id": command_id, "dispatched": False, "reason": "confirmation_claim_rejected"},
+                sort_keys=True,
+            )
+        )
+        return 2
+    try:
+        dispatched = adapter.dispatch(
+            args.text,
+            expected_revision=baseline.revision,
+            client_token=args.client_token,
+            confirm=True,
+        )
+    except TrpcError:
+        ledger.append(
+            EvidenceEvent(
+                event_id=str(uuid.uuid4()),
+                command_id=command_id,
+                leg=Leg.DISPATCH,
+                state=LegState.FAILED,
+                kind="terminal.send.ambiguous",
+                provenance=Provenance.API,
+                reason="transport_ambiguous",
+                evidence_ref=f"terminal:{adapter.config.terminal_id}",
+            )
+        )
+        print(
+            json.dumps(
+                {"command_id": command_id, "dispatched": False, "reason": "transport_ambiguous"},
+                sort_keys=True,
+            )
+        )
+        return 2
     ledger.append(dispatched.to_evidence(command_id))
     if not dispatched.dispatched:
         print(

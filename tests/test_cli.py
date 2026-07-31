@@ -7,10 +7,13 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+from relayproof.adapters.superset import CanaryResult, DispatchResult, TerminalSnapshot, TrpcError
+from relayproof.claims import ConfirmationClaimStore
 from relayproof.cli import doctor, main
 from relayproof.ledger import JsonlLedger
+from relayproof.model import EvidenceEvent, Leg, LegState, Provenance
 
 
 class CliTests(unittest.TestCase):
@@ -72,7 +75,10 @@ class CliTests(unittest.TestCase):
 
     def test_superset_send_defaults_to_zero_network_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            manifest = Path(directory) / "manifest.json"
+            root = Path(directory)
+            manifest = root / "manifest.json"
+            ledger_path = root / "events.jsonl"
+            claim_dir = root / "claims"
             manifest.write_text(
                 json.dumps(
                     {
@@ -99,6 +105,10 @@ class CliTests(unittest.TestCase):
                         "CANARY-1",
                         "--expect-revision",
                         "3",
+                        "--ledger",
+                        str(ledger_path),
+                        "--claim-dir",
+                        str(claim_dir),
                     ]
                 )
         self.assertEqual(code, 0)
@@ -157,6 +167,165 @@ class CliTests(unittest.TestCase):
             self.assertNotIn("top-secret", ledger_path.read_text(encoding="utf-8"))
             self.assertEqual(len(list(claim_dir.glob("*.json"))), 1)
             self.assertIn('"command_id": "stable-token"', output.getvalue())
+            projected = StringIO()
+            with redirect_stdout(projected):
+                self.assertEqual(
+                    main(["receipt", "show", "stable-token", "--ledger", str(ledger_path)]),
+                    0,
+                )
+            self.assertIn("YELLOW command=stable-token", projected.getvalue())
+
+    def test_receipt_show_rejects_unknown_command(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = StringIO()
+            with redirect_stdout(output):
+                code = main(
+                    [
+                        "receipt",
+                        "show",
+                        "missing-command",
+                        "--ledger",
+                        str(Path(directory) / "events.jsonl"),
+                    ]
+                )
+            self.assertEqual(code, 2)
+            self.assertIn("receipt_not_found", output.getvalue())
+
+    def test_confirm_without_claim_is_zero_network_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.json"
+            manifest.write_text("{}", encoding="utf-8")
+            baseline = SimpleNamespace(revision=7, text="clean")
+            adapter = MagicMock()
+            adapter.config.terminal_id = "terminal-1"
+            adapter.snapshot.return_value = baseline
+            output = StringIO()
+            with patch("relayproof.cli.SupersetConfig.from_manifest"), patch(
+                "relayproof.cli.SupersetAdapter", return_value=adapter
+            ), redirect_stdout(output):
+                code = main(
+                    [
+                        "superset",
+                        "send",
+                        "--manifest",
+                        str(manifest),
+                        "--text",
+                        "private command",
+                        "--canary",
+                        "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF",
+                        "--expect-revision",
+                        "7",
+                        "--client-token",
+                        "missing-token",
+                        "--confirm-send",
+                        "--ledger",
+                        str(root / "events.jsonl"),
+                        "--claim-dir",
+                        str(root / "claims"),
+                    ]
+                )
+            self.assertEqual(code, 2)
+            self.assertIn("confirmation_claim_rejected", output.getvalue())
+            self.assertNotIn("private command", output.getvalue())
+
+    def test_full_dry_run_confirm_flow_persists_dispatch_and_accept(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.json"
+            ledger = root / "events.jsonl"
+            claims = root / "claims"
+            manifest.write_text("{}", encoding="utf-8")
+            adapter = MagicMock()
+            adapter.config.terminal_id = "terminal-1"
+            adapter.snapshot.return_value = TerminalSnapshot("terminal-1", "clean", 7, 80, 24)
+
+            def dispatch(_text: str, *, expected_revision: int, client_token: str, confirm: bool):
+                return DispatchResult(
+                    client_token=client_token,
+                    terminal_id="terminal-1",
+                    delivery_id="11111111-1111-4111-8111-111111111111" if confirm else None,
+                    phase="injected" if confirm else "dry_run",
+                    submit_sent=confirm,
+                    duplicate=False,
+                    revision_before=expected_revision,
+                    expected_revision=expected_revision,
+                    prompt_status="empty" if confirm else "unknown",
+                    target_runtime="claude" if confirm else "unknown",
+                    revision_after=8 if confirm else None,
+                    dry_run=not confirm,
+                )
+
+            adapter.dispatch.side_effect = dispatch
+            adapter.await_canary.return_value = CanaryResult(
+                True,
+                1,
+                8,
+                EvidenceEvent(
+                    event_id="accept-1",
+                    command_id="stable-token",
+                    leg=Leg.ACCEPT,
+                    state=LegState.SUCCEEDED,
+                    kind="canary.observed",
+                    provenance=Provenance.TERMINAL_DIFF,
+                ),
+            )
+            common = [
+                "superset", "send", "--manifest", str(manifest),
+                "--text", "private command",
+                "--canary", "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF",
+                "--expect-revision", "7",
+                "--client-token", "stable-token",
+                "--ledger", str(ledger),
+                "--claim-dir", str(claims),
+            ]
+            with patch("relayproof.cli.SupersetConfig.from_manifest"), patch(
+                "relayproof.cli.SupersetAdapter", return_value=adapter
+            ), redirect_stdout(StringIO()):
+                self.assertEqual(main(common), 0)
+                self.assertEqual(main([*common, "--confirm-send"]), 0)
+
+            rows = JsonlLedger(ledger).read()
+            self.assertEqual(
+                [row["kind"] for row in rows],
+                ["terminal.send.dry_run", "terminal.send", "canary.observed"],
+            )
+
+    def test_ambiguous_confirm_is_persisted_without_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ledger = root / "events.jsonl"
+            claims = root / "claims"
+            ConfirmationClaimStore(claims).issue(
+                client_token="stable-token",
+                command_id="stable-token",
+                text="private command",
+                expected_revision=7,
+                terminal_id="terminal-1",
+            )
+            adapter = MagicMock()
+            adapter.config.terminal_id = "terminal-1"
+            adapter.snapshot.return_value = TerminalSnapshot("terminal-1", "clean", 7, 80, 24)
+            adapter.dispatch.side_effect = TrpcError("Superset tRPC transport failed")
+            output = StringIO()
+            with patch("relayproof.cli.SupersetConfig.from_manifest"), patch(
+                "relayproof.cli.SupersetAdapter", return_value=adapter
+            ), redirect_stdout(output):
+                code = main(
+                    [
+                        "superset", "send", "--manifest", str(root / "manifest.json"),
+                        "--text", "private command",
+                        "--canary", "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF",
+                        "--expect-revision", "7",
+                        "--client-token", "stable-token", "--confirm-send",
+                        "--ledger", str(ledger), "--claim-dir", str(claims),
+                    ]
+                )
+            self.assertEqual(code, 2)
+            self.assertIn("transport_ambiguous", output.getvalue())
+            rows = JsonlLedger(ledger).read()
+            self.assertEqual(rows[0]["kind"], "terminal.send.ambiguous")
+            self.assertEqual(adapter.dispatch.call_count, 1)
 
     def test_superset_confirmed_send_snapshots_and_rejects_revision_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

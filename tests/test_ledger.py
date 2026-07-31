@@ -28,6 +28,7 @@ class LedgerTests(unittest.TestCase):
             rows = ledger.read()
             self.assertEqual(rows[0]["event_id"], "evt-1")
             self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            self.assertEqual(os.stat(path.parent).st_mode & 0o777, 0o700)
             self.assertNotIn("raw_transcript", rows[0])
 
 
