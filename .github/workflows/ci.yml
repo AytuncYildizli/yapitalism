@@ -30,6 +30,6 @@ jobs:
       - name: Doctor replay
         env:
           PYTHONPATH: src
-        run: python -m relayproof.cli doctor fixtures/stuck-revision.json
+        run: python -m yapitalism.cli doctor fixtures/stuck-revision.json
       - name: Build wheel
         run: python -m build --wheel

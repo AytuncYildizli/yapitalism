@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from relayproof.model import EvidenceEvent, Leg, LegState, Provenance, Receipt, Status
+from yapitalism.model import EvidenceEvent, Leg, LegState, Provenance, Receipt, Status
 
 
 def event(

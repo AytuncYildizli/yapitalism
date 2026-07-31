@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from relayproof.cli import doctor, main
+from yapitalism.cli import doctor, main
 
 
 class CliTests(unittest.TestCase):
@@ -58,7 +58,7 @@ class CliTests(unittest.TestCase):
             )
             output = StringIO()
             with (
-                patch("relayproof.cli.SupersetAdapter") as adapter_type,
+                patch("yapitalism.cli.SupersetAdapter") as adapter_type,
                 redirect_stdout(output),
             ):
                 adapter_type.return_value.snapshot.return_value = snapshot
@@ -125,7 +125,7 @@ class CliTests(unittest.TestCase):
             output = StringIO()
             baseline = SimpleNamespace(revision=8, text="private baseline")
             with (
-                patch("relayproof.cli.SupersetAdapter") as adapter_type,
+                patch("yapitalism.cli.SupersetAdapter") as adapter_type,
                 redirect_stdout(output),
             ):
                 adapter_type.return_value.snapshot.return_value = baseline
@@ -138,7 +138,7 @@ class CliTests(unittest.TestCase):
                         "--text",
                         "private command",
                         "--canary",
-                        "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF",
+                        "YAPITALISM_ACK_0123456789ABCDEF0123456789ABCDEF",
                         "--expect-revision",
                         "7",
                         "--confirm-send",
@@ -156,7 +156,7 @@ class CliTests(unittest.TestCase):
 
     def test_superset_confirmed_send_without_client_token_is_zero_network_rejected(self) -> None:
         output = StringIO()
-        with patch("relayproof.cli.SupersetAdapter") as adapter_type, redirect_stdout(output):
+        with patch("yapitalism.cli.SupersetAdapter") as adapter_type, redirect_stdout(output):
             code = main(
                 [
                     "superset",
@@ -166,7 +166,7 @@ class CliTests(unittest.TestCase):
                     "--text",
                     "private command",
                     "--canary",
-                    "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF",
+                    "YAPITALISM_ACK_0123456789ABCDEF0123456789ABCDEF",
                     "--expect-revision",
                     "7",
                     "--confirm-send",

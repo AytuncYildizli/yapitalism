@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to RelayProof will be documented here.
+All notable changes to Yapitalism will be documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow Semantic Versioning.
 

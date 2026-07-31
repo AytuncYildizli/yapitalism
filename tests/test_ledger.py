@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from relayproof.ledger import JsonlLedger
-from relayproof.model import EvidenceEvent, Leg, LegState, Provenance
+from yapitalism.ledger import JsonlLedger
+from yapitalism.model import EvidenceEvent, Leg, LegState, Provenance
 
 
 class LedgerTests(unittest.TestCase):

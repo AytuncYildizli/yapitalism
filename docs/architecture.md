@@ -2,7 +2,7 @@
 
 ## Boundary model
 
-RelayProof observes five independent command legs:
+Yapitalism observes five independent command legs:
 
 ```text
 capture → dispatch → accept → work → deliver

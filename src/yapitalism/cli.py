@@ -157,7 +157,7 @@ def superset_send(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="relayproof")
+    parser = argparse.ArgumentParser(prog="yapitalism")
     subcommands = parser.add_subparsers(dest="command", required=True)
     doctor_parser = subcommands.add_parser("doctor", help="project a scrubbed fixture")
     doctor_parser.add_argument("fixture", type=Path)

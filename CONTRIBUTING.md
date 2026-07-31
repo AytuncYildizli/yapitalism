@@ -1,6 +1,6 @@
 # Contributing
 
-RelayProof is currently a private, small-group project.
+Yapitalism is currently a private, small-group project.
 
 ## Development loop
 
