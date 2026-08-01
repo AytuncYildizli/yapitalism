@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import stat
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -67,6 +70,40 @@ class ConfirmationClaimStore:
         expected_revision: int,
         terminal_id: str,
     ) -> None:
+        with self._exclusive():
+            self._issue_locked(
+                client_token=client_token,
+                command_id=command_id,
+                text=text,
+                expected_revision=expected_revision,
+                terminal_id=terminal_id,
+            )
+
+    def consume(
+        self,
+        *,
+        client_token: str,
+        text: str,
+        expected_revision: int,
+        terminal_id: str,
+    ) -> str:
+        with self._exclusive():
+            return self._consume_locked(
+                client_token=client_token,
+                text=text,
+                expected_revision=expected_revision,
+                terminal_id=terminal_id,
+            )
+
+    def _issue_locked(
+        self,
+        *,
+        client_token: str,
+        command_id: str,
+        text: str,
+        expected_revision: int,
+        terminal_id: str,
+    ) -> None:
         if not command_id.strip() or not terminal_id.strip():
             raise ValueError("command_id and terminal_id are required")
         if expected_revision < 0:
@@ -92,37 +129,33 @@ class ConfirmationClaimStore:
         try:
             self._create(path, encoded)
         except FileExistsError:
+            # An unreadable claim is NOT replaced. Replacing it would let a
+            # truncation rebind a single-use token: the binding it asserted is
+            # exactly what became unverifiable, so overwriting it silently
+            # authorizes a different dispatch under the same token. Wedging the
+            # token behind an actionable error is the safe direction.
             try:
-                existing: dict[str, Any] | None = self._read(path)
+                existing = self._read(path)
             except ValueError:
-                # Truncated or corrupt: a crash part-way through a previous
-                # issue must not wedge this token forever. PermissionError is
-                # deliberately not caught — wrong ownership or mode is an
-                # operator problem, not something to silently overwrite.
-                existing = None
-            if existing is not None:
-                binding_keys = (
-                    "command_id",
-                    "token_hash",
-                    "payload_hash",
-                    "expected_revision",
-                    "terminal_id",
-                )
-                if any(existing.get(key) != payload[key] for key in binding_keys):
-                    raise ValueError("client_token is already bound to a different claim") from None
-                if not _claim_expired(existing):
-                    return
-                # Expired: a stale claim is not a conflicting claim. Replacing it
-                # is what keeps a legitimate retry possible; returning here would
-                # report success while leaving a claim `consume` always rejects.
+                raise ValueError(
+                    "confirmation claim is unreadable; remove it to reissue this client_token"
+                ) from None
+            binding_keys = (
+                "command_id",
+                "token_hash",
+                "payload_hash",
+                "expected_revision",
+                "terminal_id",
+            )
+            if any(existing.get(key) != payload[key] for key in binding_keys):
+                raise ValueError("client_token is already bound to a different claim") from None
+            if not _claim_expired(existing):
+                return
+            # Expired with a binding proven identical to the one being issued.
+            # A stale claim is not a conflicting claim, and returning here would
+            # report success while leaving a claim `consume` always rejects.
             os.unlink(path)
             self._create(path, encoded)
-        # The consumed marker can appear between the check above and the create,
-        # in which case that create resurrected a token that was already spent.
-        # The create is the atomic point, so the marker is re-checked after it.
-        if consumed.exists():
-            os.unlink(path)
-            raise ValueError("client_token confirmation claim was already consumed")
 
     @staticmethod
     def _create(path: Path, encoded: bytes) -> None:
@@ -145,7 +178,7 @@ class ConfirmationClaimStore:
         os.close(fd)
         _fsync_dir(path.parent)
 
-    def consume(
+    def _consume_locked(
         self,
         *,
         client_token: str,
@@ -181,6 +214,28 @@ class ConfirmationClaimStore:
         if not isinstance(command_id, str) or not command_id:
             raise ValueError("confirmation claim is invalid")
         return command_id
+
+    @contextmanager
+    def _exclusive(self) -> Iterator[None]:
+        """Serialize issue and consume against each other.
+
+        Both are check-then-act over the same two pathnames, so without a lock
+        an `issue` that passed the consumed-marker check can recreate a live
+        claim that a concurrent `consume` already spent, and two consumers can
+        each dispatch one token. The lock file is separate from the claims so
+        it is never mistaken for one.
+        """
+        self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(self.root, 0o700)
+        descriptor = os.open(self.root / ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
 
     def _path(self, client_token: str) -> Path:
         return self.root / f"{_token_key(client_token)}.json"

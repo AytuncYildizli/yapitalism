@@ -154,17 +154,34 @@ class ConfirmationClaimRecoveryTests(unittest.TestCase):
             store.issue(**self.ARGS)
             self.assertEqual(self.consume(store), "cmd-1")
 
-    def test_truncated_claim_is_replaced_by_reissue(self) -> None:
+    def test_truncated_claim_is_refused_with_an_actionable_error(self) -> None:
+        """An unreadable claim must NOT be silently replaced.
+
+        The binding it asserted is exactly what became unverifiable, so
+        overwriting it would let a truncation rebind a single-use token to a
+        different dispatch. Refusing with a remedy keeps the token wedged, which
+        is the safe direction, and still avoids the original bug where `issue`
+        reported success on a claim `consume` would always reject.
+        """
         with tempfile.TemporaryDirectory() as directory:
             store = ConfirmationClaimStore(Path(directory))
             store.issue(**self.ARGS)
 
-            # A crash part-way through a previous issue.
             path = next(Path(directory).glob("*.json"))
             path.write_text("", encoding="utf-8")
 
+            with self.assertRaisesRegex(ValueError, "unreadable"):
+                store.issue(**self.ARGS)
+
+    def test_truncation_cannot_rebind_a_token_to_a_different_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ConfirmationClaimStore(Path(directory))
             store.issue(**self.ARGS)
-            self.assertEqual(self.consume(store), "cmd-1")
+            next(Path(directory).glob("*.json")).write_text("", encoding="utf-8")
+
+            rebind = {**self.ARGS, "command_id": "cmd-2", "text": "a different command"}
+            with self.assertRaisesRegex(ValueError, "unreadable"):
+                store.issue(**rebind)
 
     def test_claim_consumed_during_issue_is_not_resurrected(self) -> None:
         """The consumed marker is re-checked after the exclusive create.

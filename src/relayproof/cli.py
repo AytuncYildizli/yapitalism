@@ -61,12 +61,10 @@ def _state_root() -> Path:
 
 
 def receipt_show(ledger_path: Path, command_id: str) -> int:
-    ledger = JsonlLedger(ledger_path)
-    # Verify the chain before projecting. `read()` parses rows but checks no
-    # hashes, so without this an edited row — acceptance flipped to succeeded —
-    # projects GREEN even though `ledger verify` would reject the file. The
-    # chain is only worth having if the consumer that prints verdicts uses it.
-    verification = ledger.verify()
+    # One locked read for both verification and projection. Verifying and then
+    # re-reading would let a writer swap the file in between, so the projected
+    # rows would not be the verified ones.
+    verification, all_rows = JsonlLedger(ledger_path).verified_rows()
     if not verification.valid:
         print(
             json.dumps(
@@ -75,19 +73,21 @@ def receipt_show(ledger_path: Path, command_id: str) -> int:
             )
         )
         return 2
-    rows = [row for row in ledger.read() if row.get("command_id") == command_id]
+    rows = [row for row in all_rows if row.get("command_id") == command_id]
     if not rows:
         print(json.dumps({"command_id": command_id, "reason": "receipt_not_found"}, sort_keys=True))
         return 2
     receipt = receipt_from_fixture({"command_id": command_id, "events": rows})
-    summary = receipt.summary()
     if receipt.status is Status.GREEN:
-        # The ledger stores events only. It carries no handoff fields, so this
+        # The ledger stores events only — it has no handoff fields — so this
         # projection cannot rule out a claimed handoff with an unknown
-        # destination — which ADR-0001 says must block GREEN. Label the verdict
-        # as leg-only rather than letting it read as a full receipt.
-        summary += " handoff=unrecorded"
-    print(summary)
+        # destination, which ADR-0001 says must block GREEN. Demote the verdict
+        # rather than appending a caveat: a suffix on a line that still reads
+        # GREEN is not a gate, because every consumer matching on the status
+        # word keeps seeing success.
+        print(f"{Status.YELLOW.value} command={command_id} pending=handoff_unrecorded")
+        return 0
+    print(receipt.summary())
     return 0
 
 
@@ -282,16 +282,29 @@ def superset_send(args: argparse.Namespace) -> int:
             )
         )
         return 2
+    if command_id != args.client_token:
+        # The claim's command_id and the client token are the same value today,
+        # but nothing enforces it. If they ever diverge, one of them keys the
+        # POST and the other labels the receipt, so a send could be dispatched
+        # under an idempotency key that no receipt refers to. Refuse instead of
+        # silently choosing.
+        print(
+            json.dumps(
+                {"command_id": command_id, "dispatched": False, "reason": "claim_identity_mismatch"},
+                sort_keys=True,
+            )
+        )
+        return 2
     try:
         dispatched = adapter.dispatch(
             args.text,
             expected_revision=baseline.revision,
-            # The token the claim authorized, not the raw argument. They are
-            # equal today only because issue() is always called with
-            # command_id == client_token; nothing enforces that, and a
-            # divergence would silently send Superset an idempotency key that
-            # no longer matches the receipt's identity.
-            client_token=command_id,
+            # The client token, not the claim's command_id. Superset keyed the
+            # dry-run on this exact token, so the confirmed send must reuse it
+            # or the idempotency key changes and one logical confirmation can
+            # become two POSTs. The equality assertion above makes the
+            # relationship explicit instead of silently preferring either one.
+            client_token=args.client_token,
             confirm=True,
         )
     except TrpcError:

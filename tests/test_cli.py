@@ -538,7 +538,14 @@ class ReceiptShowVerificationTests(unittest.TestCase):
                 )
             )
 
-    def test_intact_ledger_projects(self) -> None:
+    def test_intact_ledger_projects_yellow_because_handoff_is_unrecorded(self) -> None:
+        """Every leg succeeded, but the ledger has no handoff fields.
+
+        ADR-0001 says an unknown handoff blocks GREEN, and the ledger cannot
+        represent one either way. The verdict is demoted rather than annotated:
+        a suffix on a line that still says GREEN is not a gate, because every
+        consumer matching on the status word keeps reading success.
+        """
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "events.jsonl"
             self.build_ledger(path)
@@ -546,7 +553,10 @@ class ReceiptShowVerificationTests(unittest.TestCase):
             with redirect_stdout(output):
                 code = main(["receipt", "show", "cmd-1", "--ledger", str(path)])
             self.assertEqual(code, 0)
-            self.assertIn("GREEN", output.getvalue())
+            printed = output.getvalue()
+            self.assertIn("YELLOW", printed)
+            self.assertIn("handoff_unrecorded", printed)
+            self.assertNotIn("GREEN", printed)
 
     def test_tampered_row_is_refused_instead_of_projected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -36,6 +36,9 @@ class Provenance(str, Enum):
 
 _ACCEPTANCE_KINDS = frozenset({"canary.observed", "agent.acknowledged"})
 _REQUIRED_LEGS = tuple(Leg)
+# Evidence that describes surrounding context rather than proving a leg. Reading
+# a terminal says nothing about whether the user's intent was captured.
+_CONTEXT_ONLY_KINDS = frozenset({"terminal.snapshot"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +111,17 @@ class Receipt:
     def latest_by_leg(self) -> dict[Leg, EvidenceEvent]:
         latest: dict[Leg, EvidenceEvent] = {}
         for event in self.effective_events():
-            if event.state is LegState.PENDING and event.reason == "context_only":
+            # Context-only is a property of the evidence KIND, not of a state or
+            # a reason string. Scoping it this way closes two holes at once:
+            #
+            #  - a ledger written before snapshots became PENDING still holds
+            #    `terminal.snapshot` rows recorded SUCCEEDED, and those must
+            #    stop counting as capture proof rather than only new ones;
+            #  - keying on `reason == "context_only"` let any event opt out of
+            #    the projection, so appending a newer PENDING ACCEPT with that
+            #    reason silently dropped the leg's uncertainty and left an
+            #    older success current — GREEN instead of YELLOW.
+            if event.kind in _CONTEXT_ONLY_KINDS:
                 continue
             latest[event.leg] = event
         return latest
@@ -131,14 +144,23 @@ class Receipt:
         # older ACCEPT success, and turn a RED receipt GREEN. A leg may correct
         # its own record and nothing else.
         by_id = {event.event_id: event for event in ordered}
+        position = {event.event_id: index for index, event in enumerate(ordered)}
         superseded: set[str] = set()
-        for event in ordered:
+        for index, event in enumerate(ordered):
             target_id = event.supersedes
-            if target_id is None:
+            if target_id is None or target_id == event.event_id:
+                # Self-supersession would let a failed event delete itself and
+                # resurrect the older success on its leg.
                 continue
             target = by_id.get(target_id)
-            if target is not None and target.leg is event.leg:
-                superseded.add(target_id)
+            if target is None or target.leg is not event.leg:
+                continue
+            if position[target_id] >= index:
+                # Only an earlier event may be corrected. Forward references —
+                # and therefore every cycle, which needs at least one — would
+                # otherwise erase evidence that arrived after the correction.
+                continue
+            superseded.add(target_id)
         return tuple(event for event in ordered if event.event_id not in superseded)
 
     @property

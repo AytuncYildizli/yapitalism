@@ -92,17 +92,25 @@ class JsonlLedger:
                 "prev_hash": previous_hash,
             }
             row["event_hash"] = hashlib.sha256(_canonical(row)).hexdigest()
-            encoded = _canonical(row) + b"\n"
-            written = 0
-            while written < len(encoded):
-                # A short write would append a truncated row. That row no longer
-                # parses, so the whole ledger becomes unreadable and every later
-                # verify reports ledger_unreadable.
-                written += os.write(descriptor, encoded[written:])
-            os.fsync(descriptor)
-            # fchmod on the locked descriptor rather than chmod on the path
-            # after release: the path could be swapped in between.
+            # Repair the mode before any new bytes land, so a row is never
+            # briefly readable in a world-readable ledger.
             os.fchmod(descriptor, 0o600)
+            encoded = _canonical(row) + b"\n"
+            original_size = os.fstat(descriptor).st_size
+            try:
+                written = 0
+                while written < len(encoded):
+                    # A short write appends a truncated row, and one row that no
+                    # longer parses makes the whole ledger unreadable — every
+                    # later verify and append then fails.
+                    written += os.write(descriptor, encoded[written:])
+            except BaseException:
+                # Roll the file back to its last good row. Without this an
+                # ENOSPC part-way through leaves invalid JSON permanently.
+                os.ftruncate(descriptor, original_size)
+                os.fsync(descriptor)
+                raise
+            os.fsync(descriptor)
         finally:
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -156,6 +164,32 @@ class JsonlLedger:
             last_sequence=(len(rows) if rows else None),
             chain_head=verification.chain_head,
         )
+
+    def verified_rows(self) -> tuple[LedgerVerification, tuple[dict[str, object], ...]]:
+        """Verify and return rows from a single read under one shared lock.
+
+        `verify()` followed by `read()` opens the file twice. A writer can
+        replace it in between, so the rows that get projected are not the rows
+        that were verified. Any consumer that prints a verdict must use this.
+        """
+        if not self.path.exists():
+            return LedgerVerification(True, 0, ""), ()
+        try:
+            descriptor = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError:
+            return LedgerVerification(False, 0, "", "ledger_unreadable"), ()
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_SH)
+            self._validate_descriptor(descriptor)
+            rows = self._read_descriptor(descriptor)
+        except (OSError, ValueError):
+            return LedgerVerification(False, 0, "", "ledger_unreadable"), ()
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+        return self._verify_rows(rows), rows
 
     def require_appendable(self) -> None:
         result = self.verify()
