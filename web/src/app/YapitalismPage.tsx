@@ -1,6 +1,11 @@
 import { ArrowDown, ArrowRight, Mic2 } from "lucide-react";
-import Link from "next/link";
 import styles from "./yapitalism.module.css";
+
+// Where "try the private beta" goes. This page is a standalone static export,
+// so the Superset marketing app's /contact route does not exist here — pointing
+// at it shipped two dead CTAs on the live domain. Kept in one place so the
+// destination can change without hunting through the markup.
+const BETA_HREF = "https://github.com/AytuncYildizli/yapitalism";
 
 const SESSIONS = [
 	{
@@ -51,9 +56,14 @@ export function YapitalismPage() {
 						changed without switching tabs.
 					</p>
 					<div className={styles.actions}>
-						<Link className={styles.primaryAction} href="/contact">
+						<a
+							className={styles.primaryAction}
+							href={BETA_HREF}
+							rel="noreferrer"
+							target="_blank"
+						>
 							Try the private beta <ArrowRight aria-hidden="true" size={18} />
-						</Link>
+						</a>
 						<a className={styles.secondaryAction} href="#product-demo">
 							See it work <ArrowDown aria-hidden="true" size={17} />
 						</a>
@@ -181,9 +191,14 @@ export function YapitalismPage() {
 						next thing you say goes back to that session. Risky actions still
 						wait for approval.
 					</p>
-					<Link className={styles.primaryAction} href="/contact">
+					<a
+						className={styles.primaryAction}
+						href={BETA_HREF}
+						rel="noreferrer"
+						target="_blank"
+					>
 						Try the private beta <ArrowRight aria-hidden="true" size={18} />
-					</Link>
+					</a>
 					<p className={styles.brandNote}>
 						<strong>The names, briefly.</strong> Subscription Goblin is the
 						mascot. Goblin Mode is the multi-agent mode. API at Home is the
