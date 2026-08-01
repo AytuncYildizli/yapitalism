@@ -13,12 +13,21 @@ import time
 
 from ...adapters.superset import _canary_could_appear, _structured_canary_observed
 from ..revision import RevisionTracker
-from ..tmux import TmuxError, capture_pane, list_panes, send_enter, send_literal
+from ..tmux import (
+    TmuxError,
+    capture_pane,
+    list_panes,
+    new_agent_session,
+    observe_runtime,
+    send_enter,
+    send_literal,
+)
 from .base import (
     AcceptanceOutcome,
     BackendCapabilities,
     BackendError,
     BackendPane,
+    CreateOutcome,
     SendOutcome,
 )
 
@@ -65,6 +74,54 @@ class TmuxBackend:
         except TmuxError as error:
             raise BackendError(str(error)) from None
 
+
+    def create_pane(
+        self,
+        session_name: str,
+        runtime: str,
+        cwd: str,
+        *,
+        timeout: float = 10.0,
+    ) -> CreateOutcome:
+        """Start one known agent in a fresh detached session.
+
+        The pane id comes from tmux itself rather than a list-panes scan, so a
+        session someone else creates in the same moment can never be mistaken
+        for this one.
+
+        Creation and confirmation are reported separately. tmux returns a pane
+        id the instant the session exists, which is before the agent has
+        execed — and if the binary is missing the pane survives with the command
+        already dead. So the process tree is polled until it agrees, and a
+        timeout is reported as an unconfirmed runtime rather than a failure:
+        the session really does exist and the caller must be told about it, or
+        it becomes an orphan nobody knows to clean up.
+        """
+        try:
+            target_id = new_agent_session(session_name, runtime, cwd)
+        except TmuxError as error:
+            raise BackendError(str(error)) from None
+
+        deadline = time.monotonic() + timeout
+        observed = "unknown"
+        while time.monotonic() < deadline:
+            try:
+                observed = observe_runtime(target_id)
+            except TmuxError as error:
+                raise BackendError(str(error)) from None
+            if observed == runtime:
+                break
+            time.sleep(min(0.3, max(0.0, deadline - time.monotonic())))
+
+        return CreateOutcome(
+            target_id=target_id,
+            created=True,
+            runtime_requested=runtime,
+            runtime_observed=observed,
+            session_name=session_name,
+            cwd=cwd,
+            reason="" if observed == runtime else "runtime_not_observed",
+        )
 
     def send(
         self,

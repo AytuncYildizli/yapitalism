@@ -26,6 +26,15 @@ class BackendRegistry:
     def namespaces(self) -> tuple[str, ...]:
         return tuple(sorted(self._backends))
 
+    def get(self, namespace: str) -> TerminalBackend | None:
+        """Look a backend up by namespace, for calls that name no target yet.
+
+        Creating a pane has no target id to route on, so it addresses a backend
+        directly. Returns None rather than raising: "this machine cannot do
+        that" is an answer, not a failure.
+        """
+        return self._backends.get(namespace)
+
     def resolve(self, target_id: str) -> TerminalBackend:
         namespace, _ = parse_target_id(target_id)
         backend = self._backends.get(namespace)

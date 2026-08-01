@@ -148,5 +148,56 @@ def pane_send(
     receipt = build_receipt(outcome, acceptance, backend.capabilities())
     return {"ok": True, "target_id": target_id, "runtime": outcome.runtime, **receipt.as_dict()}
 
+@mcp.tool
+def panes_create(
+    runtime: str,
+    cwd: str,
+    session_name: str = "",
+) -> dict[str, object]:
+    """Start a new agent in a fresh tmux session and report what actually runs.
+
+    This STARTS A PROCESS. Name the runtime and the working directory in one
+    sentence and get an explicit confirmation before calling it.
+
+    `runtime` must be one of codex, claude, kimi. It selects a fixed launcher —
+    there is no way to pass a command, arguments, or flags through this tool,
+    and asking for one is a request to run arbitrary code by voice.
+
+    `cwd` must already exist; it is the directory the agent will work in. Say it
+    back to the operator before calling, because an agent started in the wrong
+    repo will happily edit the wrong repo.
+
+    Read the two flags separately and never merge them when speaking:
+      - `created`           the session exists.
+      - `runtime_confirmed` the agent is actually running in it.
+
+    `created: true` with `runtime_confirmed: false` means an empty session is
+    sitting there — usually a missing binary. Report it as "the session was
+    created but <runtime> is not running in it", never as "started", and
+    mention the pane so it can be cleaned up.
+
+    Superset terminals cannot be created here; its host owns their lifecycle.
+    """
+    backend = registry.get("tmux")
+    if backend is None or not hasattr(backend, "create_pane"):
+        return {"ok": False, "error": "no backend on this machine can create panes"}
+
+    name = session_name or f"yap-{runtime}-{uuid4().hex[:6]}"
+    try:
+        outcome = backend.create_pane(name, runtime, cwd)
+    except BackendError as error:
+        return {"ok": False, "error": str(error), "runtime": runtime, "cwd": cwd}
+
+    speak = (
+        f"{outcome.runtime_observed} calisiyor, pane {outcome.target_id}"
+        if outcome.runtime_confirmed
+        else (
+            f"Oturum acildi ama {runtime} calistigi dogrulanamadi; "
+            f"pane {outcome.target_id} bos olabilir"
+        )
+    )
+    return {"ok": True, "speak": speak, **outcome.as_dict()}
+
+
 if __name__ == "__main__":
     main()

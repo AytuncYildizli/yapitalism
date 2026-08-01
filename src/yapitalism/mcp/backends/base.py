@@ -120,6 +120,42 @@ class SendOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class CreateOutcome:
+    """What a backend can honestly say after being asked to start an agent.
+
+    `created` and `runtime_confirmed` are separate on purpose. tmux will happily
+    report a new session whose command died immediately — a missing binary, a
+    launcher that exits — leaving a live pane running nothing. Reporting that as
+    a started agent is the same class of lie as a YELLOW spoken as GREEN, so the
+    pane's process tree has to agree before `runtime_confirmed` is true.
+    """
+
+    target_id: str
+    created: bool
+    runtime_requested: str
+    runtime_observed: str
+    session_name: str
+    cwd: str
+    reason: str = ""
+
+    @property
+    def runtime_confirmed(self) -> bool:
+        return self.created and self.runtime_observed == self.runtime_requested
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "target_id": self.target_id,
+            "created": self.created,
+            "runtime_requested": self.runtime_requested,
+            "runtime_observed": self.runtime_observed,
+            "runtime_confirmed": self.runtime_confirmed,
+            "session_name": self.session_name,
+            "cwd": self.cwd,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class AcceptanceOutcome:
     """Whether the agent demonstrably processed the text.
 

@@ -170,6 +170,100 @@ def list_panes() -> list[TmuxPane]:
     return panes
 
 
+# The complete set of things this server will start. A create tool that took a
+# command string would be remote code execution reachable by voice, so the
+# runtime name is an index into this table and never argv itself. Extra flags
+# are deliberately not accepted from callers for the same reason.
+AGENT_LAUNCHERS: dict[str, tuple[str, ...]] = {
+    "codex": ("codex",),
+    "claude": ("claude",),
+    "kimi": ("kimi",),
+}
+
+# tmux treats ':' and '.' as target separators, so a name containing either
+# would address a different pane than the one reported back. A leading '-'
+# would parse as a flag.
+_SESSION_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
+
+
+def validate_session_name(name: str) -> str:
+    if not _SESSION_NAME.fullmatch(name):
+        raise TmuxError(
+            "session name must be 1-32 chars of letters, digits, _ or -, "
+            "and must not start with '-'"
+        )
+    return name
+
+
+def build_new_session_args(
+    session_name: str,
+    runtime: str,
+    cwd: str,
+    width: int = 200,
+    height: int = 50,
+) -> list[str]:
+    """Build the argv for creating a detached agent session.
+
+    Pure and separately tested: this is the security boundary, and asserting on
+    the argv proves the whitelist and the `--` terminator hold without having to
+    launch a real agent.
+    """
+    validate_session_name(session_name)
+    launcher = AGENT_LAUNCHERS.get(runtime)
+    if launcher is None:
+        known = ", ".join(sorted(AGENT_LAUNCHERS))
+        raise TmuxError(f"unknown runtime {runtime!r}; known runtimes: {known}")
+    if not isinstance(width, int) or not 20 <= width <= 1000:
+        raise TmuxError("width must be between 20 and 1000")
+    if not isinstance(height, int) or not 5 <= height <= 1000:
+        raise TmuxError("height must be between 5 and 1000")
+    resolved = os.path.realpath(os.path.expanduser(cwd))
+    if not os.path.isdir(resolved):
+        raise TmuxError(f"working directory does not exist: {cwd}")
+    return [
+        "new-session",
+        "-d",
+        "-s",
+        session_name,
+        "-c",
+        resolved,
+        "-x",
+        str(width),
+        "-y",
+        str(height),
+        # Print the new pane's id so the caller never has to guess which pane it
+        # just made — racing a list-panes could return someone else's new pane.
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "--",
+        *launcher,
+    ]
+
+
+def new_agent_session(
+    session_name: str,
+    runtime: str,
+    cwd: str,
+    width: int = 200,
+    height: int = 50,
+) -> str:
+    """Create a detached session running one known agent. Returns its target id."""
+    args = build_new_session_args(session_name, runtime, cwd, width, height)
+    pane_id = _run(args).strip()
+    if not re.fullmatch(r"%\d+", pane_id):
+        raise TmuxError(f"tmux did not report a usable pane id: {pane_id[:80]!r}")
+    return f"tmux:{pane_id}"
+
+
+def observe_runtime(target_id: str) -> str:
+    """What is actually running in one pane, right now."""
+    for pane in list_panes():
+        if pane.target_id == target_id:
+            return pane.runtime
+    return "unknown"
+
+
 def pane_id_from_target(target_id: str) -> str:
     if not target_id.startswith("tmux:"):
         raise TmuxError("target id must be tmux-namespaced, e.g. tmux:%0")
