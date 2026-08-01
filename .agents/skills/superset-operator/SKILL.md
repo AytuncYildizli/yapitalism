@@ -22,6 +22,7 @@ Two MCP servers cover this together. `yapitalism` runs locally and owns reading 
 - Read with `panes_list` and `pane_read`. `panes_list` covers every backend at once, including Superset terminals, so prefer it over `terminals_list` when the user asks what is running.
 - Target ids are namespaced — `tmux:%0`, `superset:<uuid>`. Pass them back verbatim. Never invent one, never strip the prefix.
 - `panes_list` returns `errors` alongside `panes`. A backend that failed is **not** the same as a backend with nothing in it. Never say "no terminals" while `errors` is non-empty; say which backend could not be reached.
+- **Report the whole list, compactly — never a subset presented as the answer.** With many panes, "compact" means totals and a breakdown, not one example. Say the count, then group by runtime, then offer to narrow: "23 pane var — 9 claude, 6 codex, 3 kimi, 5 shell. Hangisini istersin?" Listing only one backend, or only the first few, misleads the user into thinking that is everything. If the user then asks "what about Superset?", that means the first answer was wrong; do not defend it, just give the full picture.
 - Check `runtime` before sending. Only `codex`, `claude`, and `kimi` are agents. Sending to a pane whose runtime is `shell` types the text into a shell prompt, which executes it — confirm explicitly with the user before doing that, and say plainly that it is a shell, not an agent.
 
 ### Speaking a `pane_send` receipt
