@@ -69,6 +69,10 @@ def _pane_payload(
     }
     if pane.detail:
         payload["command"] = pane.detail
+    if pane.project:
+        payload["project"] = pane.project
+    if pane.branch:
+        payload["branch"] = pane.branch
     if degraded:
         # Surfaced per pane, not buried in a capabilities call the model may
         # never make.

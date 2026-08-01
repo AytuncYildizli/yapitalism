@@ -66,6 +66,11 @@ class BackendPane:
     height: int
     dead: bool
     detail: str = ""
+    #: The checked-out repo a terminal belongs to. This is what a person uses to
+    #: identify a terminal out loud — the workspace name alone ("dasendeha") is
+    #: meaningless without knowing which project it sits in.
+    project: str = ""
+    branch: str = ""
 
 
 @runtime_checkable

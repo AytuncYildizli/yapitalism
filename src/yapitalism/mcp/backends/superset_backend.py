@@ -112,6 +112,8 @@ class SupersetBackend:
                 # One unreadable workspace must not hide the rest of the host.
                 continue
             name = str(workspace.get("name") or workspace_id[:8])
+            project = str(workspace.get("projectName") or "")
+            branch = str(workspace.get("branch") or "")
             for session in sessions:
                 terminal_id = session.get("terminalId")
                 if not isinstance(terminal_id, str) or not terminal_id:
@@ -122,12 +124,15 @@ class SupersetBackend:
                 panes.append(
                     BackendPane(
                         target_id=f"superset:{terminal_id}",
-                        label=f"{name} / {terminal_id[:8]}",
+                        # Project first: it is the anchor a person names.
+                        label=f"{project}/{name}" if project else name,
                         runtime=str(agent.get("runtime") or "unknown"),
                         width=0,
                         height=0,
                         dead=state == "exited",
                         detail=state,
+                        project=project,
+                        branch=branch,
                     )
                 )
         return panes
