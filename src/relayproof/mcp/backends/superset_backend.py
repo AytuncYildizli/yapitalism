@@ -18,7 +18,13 @@ import os
 from pathlib import Path
 
 from ...adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
-from .base import BackendCapabilities, BackendError, BackendPane
+from .base import (
+    AcceptanceOutcome,
+    BackendCapabilities,
+    BackendError,
+    BackendPane,
+    SendOutcome,
+)
 
 _CACHE_DIR = Path.home() / ".cache" / "superset-watch-voice"
 _MANIFEST_DEFAULT = _CACHE_DIR / "yapitalism-manifest.json"
@@ -51,6 +57,9 @@ class SupersetBackend:
     def __init__(self, manifest_path: Path | str | None = None) -> None:
         self._manifest_path = Path(manifest_path) if manifest_path else resolve_manifest_path()
         self._adapter: SupersetAdapter | None = None
+        # await_canary needs the exact baseline the send was guarded by.
+        self._baseline: object | None = None
+        self._last_text: str | None = None
 
     @property
     def namespace(self) -> str:
@@ -108,3 +117,74 @@ class SupersetBackend:
             return adapter.snapshot(max_lines=lines).text
         except (TrpcError, ValueError) as error:
             raise BackendError(str(error)) from None
+
+
+    def send(
+        self,
+        target_id: str,
+        text: str,
+        *,
+        canary: str | None,
+        client_token: str,
+    ) -> SendOutcome:
+        """Confirmed send against the host's own guards.
+
+        Unlike tmux, every guard here is real: the host is given the exact
+        revision the baseline was read at, a stable client token, an
+        empty-prompt requirement and a no-repeat flag, and it refuses the write
+        itself if any of them no longer hold.
+        """
+        adapter = self._connect()
+        expected = self._target_id(adapter)
+        if target_id != expected:
+            raise BackendError(f"this manifest binds {expected}; it cannot send to {target_id}")
+        try:
+            baseline = adapter.snapshot(max_lines=1000)
+            if canary is not None:
+                adapter.validate_canary(
+                    canary, baseline_text=baseline.text, submitted_text=text
+                )
+            # One POST. An ambiguous transport failure is surfaced, never retried.
+            result = adapter.dispatch(
+                text,
+                expected_revision=baseline.revision,
+                client_token=client_token,
+                confirm=True,
+            )
+        except (TrpcError, ValueError) as error:
+            raise BackendError(str(error)) from None
+        self._baseline = baseline
+        self._last_text = text
+        return SendOutcome(
+            phase=result.phase,
+            dispatched=result.dispatched,
+            runtime=result.target_runtime,
+            revision_before=result.revision_before,
+            revision_after=result.revision_after,
+            delivery_ref=result.delivery_id,
+            reason="" if result.prompt_verified else "prompt_not_verified",
+        )
+
+    def await_acceptance(
+        self, target_id: str, canary: str | None, *, timeout: float = 8.0
+    ) -> AcceptanceOutcome:
+        if canary is None:
+            return AcceptanceOutcome(False, 0, "no_canary")
+        adapter = self._connect()
+        baseline = self._baseline
+        if baseline is None:
+            raise BackendError("no baseline from a prior send in this process")
+        try:
+            result = adapter.await_canary(
+                canary,
+                command_id=f"mcp-{canary[-8:]}",
+                baseline_revision=baseline.revision,
+                baseline_text=baseline.text,
+                submitted_text=self._last_text or "",
+                timeout=timeout,
+            )
+        except (TrpcError, ValueError) as error:
+            raise BackendError(str(error)) from None
+        return AcceptanceOutcome(
+            result.observed, result.attempts, "" if result.observed else "canary_timeout"
+        )

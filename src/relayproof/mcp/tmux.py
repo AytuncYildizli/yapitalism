@@ -184,3 +184,22 @@ def capture_pane(target_id: str, lines: int = 200) -> str:
         raise TmuxError(f"lines must be between 1 and {_MAX_LINES}")
     pane_id = pane_id_from_target(target_id)
     return _run(["capture-pane", "-p", "-t", pane_id, "-S", f"-{lines}"])
+
+
+def send_literal(target_id: str, text: str) -> None:
+    """Type text into a pane without interpreting it.
+
+    `-l` sends the bytes literally and `--` stops flag parsing, so text
+    beginning with `-` is data. The argument list means no shell is involved at
+    any point, so metacharacters cannot execute.
+    """
+    if not text:
+        raise TmuxError("text must not be empty")
+    pane_id = pane_id_from_target(target_id)
+    _run(["send-keys", "-t", pane_id, "-l", "--", text])
+
+
+def send_enter(target_id: str) -> None:
+    """Submit whatever is currently staged in the pane."""
+    pane_id = pane_id_from_target(target_id)
+    _run(["send-keys", "-t", pane_id, "Enter"])

@@ -99,3 +99,30 @@ def parse_target_id(target_id: str) -> tuple[str, str]:
     if not namespace or not body:
         raise BackendError("target id must be namespaced, e.g. tmux:%0")
     return namespace, body
+
+
+@dataclass(frozen=True, slots=True)
+class SendOutcome:
+    """What a backend can honestly say immediately after writing."""
+
+    phase: str
+    dispatched: bool
+    runtime: str
+    revision_before: int | None = None
+    revision_after: int | None = None
+    delivery_ref: str | None = None
+    reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptanceOutcome:
+    """Whether the agent demonstrably processed the text.
+
+    `observed=False` with `reason="no_canary"` means acceptance was never
+    testable — not that it failed. Those are different verdicts and must not
+    collapse into one.
+    """
+
+    observed: bool
+    attempts: int
+    reason: str = ""
