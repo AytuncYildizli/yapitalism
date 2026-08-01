@@ -23,6 +23,7 @@ import os
 from fastmcp import FastMCP
 
 from .backends.base import BackendError
+from .backends.superset_backend import SupersetBackend
 from .backends.tmux_backend import TmuxBackend
 from .registry import BackendRegistry
 
@@ -31,7 +32,10 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8792
 
 mcp: FastMCP = FastMCP("yapitalism")
-registry = BackendRegistry([TmuxBackend()])
+# Superset is registered unconditionally. Constructing it reads no files, and a
+# missing or unusable manifest surfaces as a per-backend error in panes_list
+# rather than preventing the server from starting or hiding tmux.
+registry = BackendRegistry([TmuxBackend(), SupersetBackend()])
 
 
 @mcp.tool

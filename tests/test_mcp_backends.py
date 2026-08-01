@@ -122,5 +122,53 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(errors, [{"backend": "superset", "error": "host unreachable"}])
 
 
+
+class SupersetBackendTests(unittest.TestCase):
+    """Contract checks that need no live host and no credentials."""
+
+    def test_namespace_and_capabilities(self) -> None:
+        from relayproof.mcp.backends.superset_backend import SupersetBackend
+
+        backend = SupersetBackend(manifest_path="/nonexistent/manifest.json")
+        self.assertEqual(backend.namespace, "superset")
+        capabilities = backend.capabilities()
+        self.assertTrue(capabilities.idempotent_dispatch)
+        self.assertTrue(capabilities.optimistic_revision)
+        self.assertTrue(capabilities.empty_prompt_check)
+        # Superset enforces all three, so nothing is degraded — this is the
+        # contrast that stops tmux borrowing its guarantees.
+        self.assertEqual(capabilities.degraded, ())
+
+    def test_runtime_detection_is_not_claimed_as_a_pre_write_check(self) -> None:
+        from relayproof.mcp.backends.superset_backend import SupersetBackend
+
+        # The host reports runtime only in a send response, so a read cannot
+        # pre-filter a non-agent target the way the tmux process tree can.
+        self.assertEqual(
+            SupersetBackend(manifest_path="/nonexistent").capabilities().runtime_detection,
+            "host_on_dispatch",
+        )
+
+    def test_missing_manifest_is_a_backend_error_not_a_crash(self) -> None:
+        from relayproof.mcp.backends.superset_backend import SupersetBackend
+
+        backend = SupersetBackend(manifest_path="/nonexistent/manifest.json")
+        with self.assertRaisesRegex(BackendError, "manifest unusable"):
+            backend.list_panes()
+
+    def test_a_broken_superset_backend_does_not_hide_tmux_panes(self) -> None:
+        from relayproof.mcp.backends.superset_backend import SupersetBackend
+
+        registry = BackendRegistry(
+            [
+                SupersetBackend(manifest_path="/nonexistent/manifest.json"),
+                FakeBackend("tmux", [pane("tmux:%0")], strong=False),
+            ]
+        )
+        panes, errors = registry.list_all()
+        self.assertEqual([p["target_id"] for p in panes], ["tmux:%0"])
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0]["backend"], "superset")
+
 if __name__ == "__main__":
     unittest.main()
