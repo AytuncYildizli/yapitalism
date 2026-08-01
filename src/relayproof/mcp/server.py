@@ -26,7 +26,7 @@ mcp: FastMCP = FastMCP("yapitalism")
 
 
 @mcp.tool
-def terminals_list() -> dict[str, object]:
+def tmux_panes_list() -> dict[str, object]:
     """List tmux panes on this machine, with the agent runtime in each one.
 
     `runtime` is derived from the pane's live process tree, not from its title:
@@ -35,6 +35,9 @@ def terminals_list() -> dict[str, object]:
     plain shell would otherwise turn an instruction into a shell command.
 
     Use `target_id` (for example `tmux:%0`) for any later call.
+
+    This is the local tmux server on this Mac. It is unrelated to Superset's
+    terminals_* tools, which address Superset-managed PTYs instead.
     """
     try:
         panes = list_panes()
@@ -57,10 +60,10 @@ def terminals_list() -> dict[str, object]:
 
 
 @mcp.tool
-def terminals_read(target_id: str, lines: int = 200) -> dict[str, object]:
+def tmux_pane_read(target_id: str, lines: int = 200) -> dict[str, object]:
     """Read recent visible output from one tmux pane.
 
-    `target_id` comes from terminals_list, e.g. `tmux:%0`. Read-only: this never
+    `target_id` comes from tmux_panes_list, e.g. `tmux:%0`. Read-only: this never
     types into the pane. Output is the pane as rendered, so it may contain
     wrapped lines; do not read raw output aloud verbatim.
     """
