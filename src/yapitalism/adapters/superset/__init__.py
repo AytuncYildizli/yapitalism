@@ -644,8 +644,8 @@ def _is_uuid(value: str) -> bool:
 
 
 def _validate_canary(canary: str) -> None:
-    if not isinstance(canary, str) or re.fullmatch(r"RELAYPROOF_ACK_[A-F0-9]{32}", canary) is None:
-        raise ValueError("canary must be RELAYPROOF_ACK_ followed by 32 uppercase hex characters")
+    if not isinstance(canary, str) or re.fullmatch(r"YAPITALISM_ACK_[A-F0-9]{32}", canary) is None:
+        raise ValueError("canary must be YAPITALISM_ACK_ followed by 32 uppercase hex characters")
 
 
 def _required_response_string(payload: dict[str, Any], key: str) -> str:

@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "relayproof"
+name = "yapitalism"
 version = "0.1.0.dev0"
 description = "Evidence-backed reliability for voice-driven agent work"
 readme = "README.md"
@@ -18,7 +18,7 @@ classifiers = [
 ]
 
 [project.scripts]
-relayproof = "relayproof.cli:main"
+yapitalism = "yapitalism.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

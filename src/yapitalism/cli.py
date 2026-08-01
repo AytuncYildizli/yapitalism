@@ -57,7 +57,7 @@ def doctor(path: Path) -> int:
 
 def _state_root() -> Path:
     configured = os.environ.get("XDG_STATE_HOME")
-    return (Path(configured) if configured else Path.home() / ".local" / "state") / "relayproof"
+    return (Path(configured) if configured else Path.home() / ".local" / "state") / "yapitalism"
 
 
 def receipt_show(ledger_path: Path, command_id: str) -> int:
@@ -366,7 +366,7 @@ def superset_send(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="relayproof")
+    parser = argparse.ArgumentParser(prog="yapitalism")
     subcommands = parser.add_subparsers(dest="command", required=True)
     doctor_parser = subcommands.add_parser("doctor", help="project a scrubbed fixture")
     doctor_parser.add_argument("fixture", type=Path)

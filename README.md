@@ -1,14 +1,14 @@
-# RelayProof
+# Yapitalism
 
 **Evidence-backed reliability for voice-driven agent work.**
 
-RelayProof is a local-first receipt and observability harness for commands that cross opaque voice, remote-agent, and terminal boundaries. It tells you what is proven, what is merely observed, and where a command stopped—without pretending to control closed-source voice clients.
+Yapitalism is a local-first receipt and observability harness for commands that cross opaque voice, remote-agent, and terminal boundaries. It tells you what is proven, what is merely observed, and where a command stopped—without pretending to control closed-source voice clients.
 
 > Public pre-alpha. No production deployment, external messaging, or closed-client automation is included.
 
 ## Why
 
-A healthy audio indicator does not prove that a command reached an agent. A terminal spinner does not prove acceptance. A handoff claim does not prove where the handoff landed. RelayProof separates these boundaries and requires receipts for each.
+A healthy audio indicator does not prove that a command reached an agent. A terminal spinner does not prove acceptance. A handoff claim does not prove where the handoff landed. Yapitalism separates these boundaries and requires receipts for each.
 
 The initial incident behind this repository:
 
@@ -40,7 +40,7 @@ Evidence always carries provenance: `api`, `terminal_diff`, `ui_observation`, `u
 
 ```bash
 python3 -m unittest discover -s tests -v
-PYTHONPATH=src python3 -m relayproof.cli doctor fixtures/stuck-revision.json
+PYTHONPATH=src python3 -m yapitalism.cli doctor fixtures/stuck-revision.json
 ```
 
 Expected doctor result for the reproduced incident:
@@ -51,7 +51,7 @@ RED command=voice-canary-20260730 failed=accept reason=canary_timeout
 
 ## Real Superset adapter
 
-RelayProof talks directly to the local Superset host-service tRPC surface. It does not use a fixture for these operations.
+Yapitalism talks directly to the local Superset host-service tRPC surface. It does not use a fixture for these operations.
 
 Create an explicit owner-only manifest outside the repository:
 
@@ -65,17 +65,17 @@ Create an explicit owner-only manifest outside the repository:
 ```
 
 ```bash
-chmod 600 /path/to/relayproof-superset.json
+chmod 600 /path/to/yapitalism-superset.json
 
 # Real, read-only terminal.snapshot. Raw terminal text is never printed.
-PYTHONPATH=src python3 -m relayproof.cli superset status \
-  --manifest /path/to/relayproof-superset.json
+PYTHONPATH=src python3 -m yapitalism.cli superset status \
+  --manifest /path/to/yapitalism-superset.json
 
 # Zero-network dry run. This is the default for send.
-PYTHONPATH=src python3 -m relayproof.cli superset send \
-  --manifest /path/to/relayproof-superset.json \
+PYTHONPATH=src python3 -m yapitalism.cli superset send \
+  --manifest /path/to/yapitalism-superset.json \
   --text '<prompt whose literal text does not contain the expected marker>' \
-  --canary 'RELAYPROOF_ACK_<32-uppercase-hex-characters>' \
+  --canary 'YAPITALISM_ACK_<32-uppercase-hex-characters>' \
   --expect-revision <reviewed-revision>
 
 # A real terminal.send requires the dry-run command_id to be reused exactly.
@@ -85,14 +85,14 @@ PYTHONPATH=src python3 -m relayproof.cli superset send \
 Dry runs persist a mode-`0600`, single-use confirmation claim bound to the exact
 command hash, target terminal, and reviewed revision. Confirmed sends consume that
 claim before network dispatch. Receipt events default to
-`$XDG_STATE_HOME/relayproof/events.jsonl` (or `~/.local/state/relayproof/events.jsonl`)
+`$XDG_STATE_HOME/yapitalism/events.jsonl` (or `~/.local/state/yapitalism/events.jsonl`)
 and contain bounded metadata only. Project one receipt with:
 
 ```bash
-PYTHONPATH=src python3 -m relayproof.cli receipt show <command_id>
-PYTHONPATH=src python3 -m relayproof.cli ledger verify
-PYTHONPATH=src python3 -m relayproof.cli ledger manifest
-PYTHONPATH=src python3 -m relayproof.cli ledger migrate \
+PYTHONPATH=src python3 -m yapitalism.cli receipt show <command_id>
+PYTHONPATH=src python3 -m yapitalism.cli ledger verify
+PYTHONPATH=src python3 -m yapitalism.cli ledger manifest
+PYTHONPATH=src python3 -m yapitalism.cli ledger migrate \
   --source /path/to/legacy.jsonl \
   --output /path/to/chained.jsonl
 ```
@@ -104,7 +104,7 @@ Security boundaries: loopback-only `/trpc`, no redirects or ambient proxies, bou
 ## Repository map
 
 ```text
-src/relayproof/      typed core, canary matching, ledger, CLI
+src/yapitalism/      typed core, canary matching, ledger, CLI
 tests/                  deterministic unit and replay tests
 fixtures/               scrubbed incident replays
 docs/architecture.md    component boundaries and evidence model

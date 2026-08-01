@@ -16,14 +16,14 @@ SOCKET = "yapitalism-tmux-test"
 SESSION = "yap-send-test"
 os.environ["YAPITALISM_TMUX_SOCKET"] = SOCKET
 
-from relayproof.mcp.tmux import (  # noqa: E402
+from yapitalism.mcp.tmux import (  # noqa: E402
     capture_pane,
     list_panes,
     send_enter,
     send_literal,
 )
-from relayproof.mcp.revision import RevisionTracker  # noqa: E402
-from relayproof.canary import normalize_terminal_text  # noqa: E402
+from yapitalism.mcp.revision import RevisionTracker  # noqa: E402
+from yapitalism.canary import normalize_terminal_text  # noqa: E402
 
 
 def tmux(*args: str) -> subprocess.CompletedProcess[str]:

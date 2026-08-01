@@ -5,7 +5,7 @@
 
 ## Context
 
-RelayProof documents a two-command flow: an operator first reviews a dry run, then starts a separate CLI process to confirm the exact send. An in-memory token binding cannot survive that process boundary and therefore cannot prove that the confirmed text, target, and revision are the values the operator reviewed.
+Yapitalism documents a two-command flow: an operator first reviews a dry run, then starts a separate CLI process to confirm the exact send. An in-memory token binding cannot survive that process boundary and therefore cannot prove that the confirmed text, target, and revision are the values the operator reviewed.
 
 ## Decision
 

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to RelayProof will be documented here.
+All notable changes to Yapitalism will be documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow Semantic Versioning.
 
@@ -11,7 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Separate actor, source, target, session, command, and delivery identity dimensions on evidence events.
 - Privacy-bounded `ledger manifest` authority/projection receipts and a single-authority cutover contract.
 - Monotonic ledger sequences, event supersession, duplicate-ID protection, and local hash-chain verification.
-- `relayproof ledger verify` with explicit schema, sequence, link, and event-hash receipts.
+- `yapitalism ledger verify` with explicit schema, sequence, link, and event-hash receipts.
 - Durable, expiring, single-use confirmation claims bound to exact command hashes, targets, and revisions.
 - CLI persistence for dry-run, dispatch, ambiguous transport, and canary evidence with `receipt show` projection.
 - Structured canary matching that preserves ordinary acknowledgement token boundaries.

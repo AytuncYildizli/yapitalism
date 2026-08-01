@@ -1,4 +1,4 @@
-"""RelayProof public API."""
+"""Yapitalism public API."""
 
 from .model import EvidenceEvent, Leg, LegState, Provenance, Receipt, Status
 

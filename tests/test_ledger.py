@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from relayproof.ledger import JsonlLedger
-from relayproof.model import EvidenceEvent, Leg, LegState, Provenance
+from yapitalism.ledger import JsonlLedger
+from yapitalism.model import EvidenceEvent, Leg, LegState, Provenance
 
 
 def evidence(event_id: str = "evt-1", *, command_id: str = "cmd-1") -> EvidenceEvent:

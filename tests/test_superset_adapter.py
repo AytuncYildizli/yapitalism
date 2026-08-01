@@ -12,16 +12,16 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
-from relayproof.adapters.superset import (
+from yapitalism.adapters.superset import (
     SupersetAdapter,
     SupersetConfig,
     TrpcError,
     _canary_could_appear,
     _structured_canary_observed,
 )
-from relayproof.model import Leg, LegState
+from yapitalism.model import Leg, LegState
 
-CANARY = "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF"
+CANARY = "YAPITALISM_ACK_0123456789ABCDEF0123456789ABCDEF"
 DELIVERY_ID = "11111111-1111-4111-8111-111111111111"
 
 

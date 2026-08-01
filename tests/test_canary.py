@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from relayproof.canary import canary_observed, normalize_terminal_text
+from yapitalism.canary import canary_observed, normalize_terminal_text
 
 
 class CanaryTests(unittest.TestCase):

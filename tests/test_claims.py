@@ -6,7 +6,7 @@ import time
 import unittest
 from pathlib import Path
 
-from relayproof.claims import ConfirmationClaimStore
+from yapitalism.claims import ConfirmationClaimStore
 
 
 class ConfirmationClaimStoreTests(unittest.TestCase):

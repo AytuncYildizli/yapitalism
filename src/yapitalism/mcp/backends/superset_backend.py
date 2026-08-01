@@ -28,7 +28,7 @@ from .base import (
 
 _CACHE_DIR = Path.home() / ".cache" / "superset-watch-voice"
 _MANIFEST_DEFAULT = _CACHE_DIR / "yapitalism-manifest.json"
-_MANIFEST_LEGACY = _CACHE_DIR / "relayproof-manifest.json"
+_MANIFEST_LEGACY = _CACHE_DIR / "yapitalism-manifest.json"
 
 _CAPABILITIES = BackendCapabilities(
     idempotent_dispatch=True,

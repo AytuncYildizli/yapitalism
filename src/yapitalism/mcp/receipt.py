@@ -21,7 +21,7 @@ from uuid import uuid4
 
 from .backends.base import AcceptanceOutcome, BackendCapabilities, SendOutcome
 
-CANARY_PREFIX = "RELAYPROOF_ACK_"  # renames with the package
+CANARY_PREFIX = "YAPITALISM_ACK_"  # renames with the package
 
 
 def new_canary() -> str:

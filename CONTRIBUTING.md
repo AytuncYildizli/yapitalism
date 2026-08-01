@@ -1,6 +1,6 @@
 # Contributing
 
-RelayProof is currently a public pre-alpha project with a deliberately small scope.
+Yapitalism is currently a public pre-alpha project with a deliberately small scope.
 
 ## Development loop
 

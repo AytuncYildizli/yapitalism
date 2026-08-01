@@ -9,11 +9,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from relayproof.adapters.superset import CanaryResult, DispatchResult, TerminalSnapshot, TrpcError
-from relayproof.claims import ConfirmationClaimStore
-from relayproof.cli import doctor, main
-from relayproof.ledger import JsonlLedger
-from relayproof.model import EvidenceEvent, Leg, LegState, Provenance
+from yapitalism.adapters.superset import CanaryResult, DispatchResult, TerminalSnapshot, TrpcError
+from yapitalism.claims import ConfirmationClaimStore
+from yapitalism.cli import doctor, main
+from yapitalism.ledger import JsonlLedger
+from yapitalism.model import EvidenceEvent, Leg, LegState, Provenance
 
 
 class CliTests(unittest.TestCase):
@@ -62,7 +62,7 @@ class CliTests(unittest.TestCase):
             )
             output = StringIO()
             with (
-                patch("relayproof.cli.SupersetAdapter") as adapter_type,
+                patch("yapitalism.cli.SupersetAdapter") as adapter_type,
                 redirect_stdout(output),
             ):
                 adapter_type.return_value.snapshot.return_value = snapshot
@@ -147,7 +147,7 @@ class CliTests(unittest.TestCase):
                         "--text",
                         "private command",
                         "--canary",
-                        "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF",
+                        "YAPITALISM_ACK_0123456789ABCDEF0123456789ABCDEF",
                         "--expect-revision",
                         "3",
                         "--client-token",
@@ -201,8 +201,8 @@ class CliTests(unittest.TestCase):
             adapter.config.terminal_id = "terminal-1"
             adapter.snapshot.return_value = baseline
             output = StringIO()
-            with patch("relayproof.cli.SupersetConfig.from_manifest"), patch(
-                "relayproof.cli.SupersetAdapter", return_value=adapter
+            with patch("yapitalism.cli.SupersetConfig.from_manifest"), patch(
+                "yapitalism.cli.SupersetAdapter", return_value=adapter
             ), redirect_stdout(output):
                 code = main(
                     [
@@ -213,7 +213,7 @@ class CliTests(unittest.TestCase):
                         "--text",
                         "private command",
                         "--canary",
-                        "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF",
+                        "YAPITALISM_ACK_0123456789ABCDEF0123456789ABCDEF",
                         "--expect-revision",
                         "7",
                         "--client-token",
@@ -274,14 +274,14 @@ class CliTests(unittest.TestCase):
             common = [
                 "superset", "send", "--manifest", str(manifest),
                 "--text", "private command",
-                "--canary", "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF",
+                "--canary", "YAPITALISM_ACK_0123456789ABCDEF0123456789ABCDEF",
                 "--expect-revision", "7",
                 "--client-token", "stable-token",
                 "--ledger", str(ledger),
                 "--claim-dir", str(claims),
             ]
-            with patch("relayproof.cli.SupersetConfig.from_manifest"), patch(
-                "relayproof.cli.SupersetAdapter", return_value=adapter
+            with patch("yapitalism.cli.SupersetConfig.from_manifest"), patch(
+                "yapitalism.cli.SupersetAdapter", return_value=adapter
             ), redirect_stdout(StringIO()):
                 self.assertEqual(main(common), 0)
                 self.assertEqual(main([*common, "--confirm-send"]), 0)
@@ -309,14 +309,14 @@ class CliTests(unittest.TestCase):
             adapter.snapshot.return_value = TerminalSnapshot("terminal-1", "clean", 7, 80, 24)
             adapter.dispatch.side_effect = TrpcError("Superset tRPC transport failed")
             output = StringIO()
-            with patch("relayproof.cli.SupersetConfig.from_manifest"), patch(
-                "relayproof.cli.SupersetAdapter", return_value=adapter
+            with patch("yapitalism.cli.SupersetConfig.from_manifest"), patch(
+                "yapitalism.cli.SupersetAdapter", return_value=adapter
             ), redirect_stdout(output):
                 code = main(
                     [
                         "superset", "send", "--manifest", str(root / "manifest.json"),
                         "--text", "private command",
-                        "--canary", "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF",
+                        "--canary", "YAPITALISM_ACK_0123456789ABCDEF0123456789ABCDEF",
                         "--expect-revision", "7",
                         "--client-token", "stable-token", "--confirm-send",
                         "--ledger", str(ledger), "--claim-dir", str(claims),
@@ -395,14 +395,14 @@ class CliTests(unittest.TestCase):
             ledger.chmod(0o600)
             adapter = MagicMock()
             output = StringIO()
-            with patch("relayproof.cli.SupersetConfig.from_manifest"), patch(
-                "relayproof.cli.SupersetAdapter", return_value=adapter
+            with patch("yapitalism.cli.SupersetConfig.from_manifest"), patch(
+                "yapitalism.cli.SupersetAdapter", return_value=adapter
             ), redirect_stdout(output):
                 code = main(
                     [
                         "superset", "send", "--manifest", str(root / "manifest.json"),
                         "--text", "private command",
-                        "--canary", "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF",
+                        "--canary", "YAPITALISM_ACK_0123456789ABCDEF0123456789ABCDEF",
                         "--expect-revision", "7",
                         "--ledger", str(ledger), "--claim-dir", str(root / "claims"),
                     ]
@@ -459,7 +459,7 @@ class CliTests(unittest.TestCase):
             output = StringIO()
             baseline = SimpleNamespace(revision=8, text="private baseline")
             with (
-                patch("relayproof.cli.SupersetAdapter") as adapter_type,
+                patch("yapitalism.cli.SupersetAdapter") as adapter_type,
                 redirect_stdout(output),
             ):
                 adapter_type.return_value.snapshot.return_value = baseline
@@ -472,7 +472,7 @@ class CliTests(unittest.TestCase):
                         "--text",
                         "private command",
                         "--canary",
-                        "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF",
+                        "YAPITALISM_ACK_0123456789ABCDEF0123456789ABCDEF",
                         "--expect-revision",
                         "7",
                         "--confirm-send",
@@ -494,7 +494,7 @@ class CliTests(unittest.TestCase):
 
     def test_superset_confirmed_send_without_client_token_is_zero_network_rejected(self) -> None:
         output = StringIO()
-        with patch("relayproof.cli.SupersetAdapter") as adapter_type, redirect_stdout(output):
+        with patch("yapitalism.cli.SupersetAdapter") as adapter_type, redirect_stdout(output):
             code = main(
                 [
                     "superset",
@@ -504,7 +504,7 @@ class CliTests(unittest.TestCase):
                     "--text",
                     "private command",
                     "--canary",
-                    "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF",
+                    "YAPITALISM_ACK_0123456789ABCDEF0123456789ABCDEF",
                     "--expect-revision",
                     "7",
                     "--confirm-send",
