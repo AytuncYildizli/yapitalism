@@ -1,13 +1,19 @@
-"""Local MCP server exposing tmux panes to Codex.
+"""Local MCP server exposing terminal panes across backends.
 
-Transport spike. Codex reaches this over plain loopback HTTP — the same shape
-as the `unityMCP` entry already in the Codex config — so there is no public
-endpoint, no OAuth, and no connector registry in the path. The phone drives a
-desktop Codex session over Remote; only the Mac ever talks to this process.
+Codex reaches this over plain loopback HTTP — the same shape as the `unityMCP`
+entry already in the Codex config — so there is no public endpoint, no OAuth,
+and no connector registry in the path. The phone drives a desktop Codex session
+over Remote; only this machine ever talks to this process.
+
+Tools are named `panes_*` rather than `terminals_*` on purpose: Superset's own
+MCP may be enabled in the same Codex config and already owns `terminals_list`.
+Two identically named tools would let a spoken "list my terminals" route to
+either server.
 
 Read-only by design. Proving the transport must not be able to mutate a
-terminal, so nothing here writes. Sending, and the receipts that go with it,
-come after the round trip is confirmed.
+terminal, so nothing here writes. Sending, and the receipts that belong with
+it, come after — and receipts are the reason sends must land here rather than
+be split across two servers that disagree about what counts as proof.
 """
 
 from __future__ import annotations
@@ -16,60 +22,60 @@ import os
 
 from fastmcp import FastMCP
 
-from .tmux import TmuxError, capture_pane, list_panes
+from .backends.base import BackendError
+from .backends.tmux_backend import TmuxBackend
+from .registry import BackendRegistry
 
 DEFAULT_HOST = "127.0.0.1"
 # 8787 belongs to the launchd-managed mahmory-api; 8791 was also taken.
 DEFAULT_PORT = 8792
 
 mcp: FastMCP = FastMCP("yapitalism")
+registry = BackendRegistry([TmuxBackend()])
 
 
 @mcp.tool
-def tmux_panes_list() -> dict[str, object]:
-    """List tmux panes on this machine, with the agent runtime in each one.
+def panes_list() -> dict[str, object]:
+    """List agent terminal panes on this machine, across every backend.
 
-    `runtime` is derived from the pane's live process tree, not from its title:
-    codex, claude, kimi, shell, or unknown. Treat anything that is not an agent
-    runtime as not addressable — a pane that used to run an agent and now runs a
-    plain shell would otherwise turn an instruction into a shell command.
+    Each pane carries:
+      - `target_id`, namespaced (`tmux:%0`). Use it verbatim for any later call.
+      - `runtime`: codex, claude, kimi, shell, or unknown. Anything that is not
+        an agent runtime is NOT addressable — a pane that used to run an agent
+        and now runs a plain shell would turn an instruction into a shell
+        command.
+      - `missing_guarantees`, when present: protections that backend cannot
+        enforce. Never describe such a pane as being as safe as one without it.
 
-    Use `target_id` (for example `tmux:%0`) for any later call.
+    `errors` lists backends that could not be reached. A backend returning no
+    panes and a backend that failed are different claims — do not report "no
+    terminals" while `errors` is non-empty.
 
-    This is the local tmux server on this Mac. It is unrelated to Superset's
-    terminals_* tools, which address Superset-managed PTYs instead.
+    This is the local machine. Superset's `terminals_*` tools address
+    Superset-managed PTYs instead.
     """
-    try:
-        panes = list_panes()
-    except TmuxError as error:
-        return {"ok": False, "error": str(error), "sessions": []}
+    panes, errors = registry.list_all()
     return {
-        "ok": True,
-        "sessions": [
-            {
-                "target_id": pane.target_id,
-                "session": f"{pane.session_name}:{pane.window_index}.{pane.pane_index}",
-                "runtime": pane.runtime,
-                "command": pane.current_command,
-                "size": f"{pane.width}x{pane.height}",
-                "dead": pane.dead,
-            }
-            for pane in panes
-        ],
+        "ok": not errors,
+        "backends": list(registry.namespaces),
+        "panes": panes,
+        "errors": errors,
     }
 
 
 @mcp.tool
-def tmux_pane_read(target_id: str, lines: int = 200) -> dict[str, object]:
-    """Read recent visible output from one tmux pane.
+def pane_read(target_id: str, lines: int = 200) -> dict[str, object]:
+    """Read recent visible output from one pane.
 
-    `target_id` comes from tmux_panes_list, e.g. `tmux:%0`. Read-only: this never
-    types into the pane. Output is the pane as rendered, so it may contain
-    wrapped lines; do not read raw output aloud verbatim.
+    `target_id` comes from panes_list and must stay namespaced, e.g. `tmux:%0`.
+    Read-only: this never types into the pane. Output is the pane as rendered,
+    so it may hold wrapped lines, prompts and ANSI leftovers — summarize it
+    rather than reading it aloud verbatim.
     """
     try:
-        text = capture_pane(target_id, lines)
-    except TmuxError as error:
+        backend = registry.resolve(target_id)
+        text = backend.read_pane(target_id, lines)
+    except BackendError as error:
         return {"ok": False, "error": str(error), "target_id": target_id}
     return {"ok": True, "target_id": target_id, "text": text}
 
