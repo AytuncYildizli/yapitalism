@@ -28,7 +28,10 @@ from .base import (
 
 _CACHE_DIR = Path.home() / ".cache" / "superset-watch-voice"
 _MANIFEST_DEFAULT = _CACHE_DIR / "yapitalism-manifest.json"
-_MANIFEST_LEGACY = _CACHE_DIR / "yapitalism-manifest.json"
+# Deliberately NOT renamed: this is the filename an existing install actually
+# has on disk. A blanket rebrand rewrote it once and silently broke the
+# fallback, because both constants then pointed at a file that does not exist.
+_MANIFEST_LEGACY = _CACHE_DIR / "relayproof-manifest.json"
 
 _CAPABILITIES = BackendCapabilities(
     idempotent_dispatch=True,
