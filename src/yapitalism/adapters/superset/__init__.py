@@ -319,7 +319,7 @@ class _TrpcTransport:
         payload: dict[str, object],
         *,
         timeout: float | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         wire = json.dumps({"json": payload}, separators=(",", ":"))
         url = f"{self.config.endpoint}/{procedure}?{urlencode({'input': wire})}"
         return self._request(Request(url, headers=self._headers(), method="GET"), timeout)
@@ -367,9 +367,9 @@ class _TrpcTransport:
         data = cast(dict[str, Any], result).get("data")
         if isinstance(data, dict) and "json" in data:
             data = cast(dict[str, Any], data)["json"]
-        if not isinstance(data, dict):
-            raise TrpcError("Superset tRPC result was not an object")
-        return cast(dict[str, Any], data)
+        if not isinstance(data, (dict, list)):
+            raise TrpcError("Superset tRPC result was not an object or array")
+        return cast(Any, data)
 
 
 class SupersetAdapter:
@@ -405,6 +405,36 @@ class SupersetAdapter:
             cols=_required_positive_int(data, "cols"),
             rows=_required_positive_int(data, "rows"),
         )
+
+    def list_workspaces(self) -> list[dict[str, Any]]:
+        """Every workspace on this host.
+
+        Uses only the endpoint and token from the manifest; the terminal it
+        binds is irrelevant here, which is what makes enumeration possible from
+        a single-terminal manifest.
+        """
+        data = self._transport.query("workspace.list", {})
+        if not isinstance(data, list):
+            raise TrpcError("Superset workspace.list did not return an array")
+        return [row for row in cast(list[Any], data) if isinstance(row, dict)]
+
+    def list_terminals(self, workspace_id: str) -> list[dict[str, Any]]:
+        """Terminal sessions in one workspace, with the host's own runtime.
+
+        The runtime here comes from the host's agent registry rather than a
+        process scan, so unlike tmux it can be trusted before a write.
+        """
+        if not workspace_id.strip():
+            raise ValueError("workspace_id must not be empty")
+        data = self._transport.query("terminal.listSessions", {"workspaceId": workspace_id})
+        if not isinstance(data, dict):
+            raise TrpcError("Superset terminal.listSessions did not return an object")
+        sessions = cast(dict[str, Any], data).get("sessions")
+        if not isinstance(sessions, list):
+            # The wrapper object is load-bearing: treating a missing `sessions`
+            # as "no terminals" would report an empty workspace for a broken read.
+            raise TrpcError("Superset terminal.listSessions omitted sessions")
+        return [row for row in cast(list[Any], sessions) if isinstance(row, dict)]
 
     def dispatch(
         self,

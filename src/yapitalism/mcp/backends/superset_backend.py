@@ -6,15 +6,16 @@ in this path and cannot be: its `terminals_send` returns only
 routed through it can never obtain proof. The host itself does carry the
 receipt engine — this backend is how a verdict finally reaches it.
 
-One manifest binds one terminal, so `list_panes` reports that terminal alone.
-Enumerating a workspace would need tRPC procedures this adapter does not
-implement; claiming to list everything while showing one would be worse than
-being narrow.
+A manifest binds one terminal, but enumeration needs only its endpoint and
+token — so a single-terminal manifest still sees every terminal on the host.
+Each send and read is then bound to the requested (workspace, terminal) pair
+rather than the manifest's own.
 """
 
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from pathlib import Path
 
 from ...adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
@@ -37,12 +38,9 @@ _CAPABILITIES = BackendCapabilities(
     idempotent_dispatch=True,
     optimistic_revision=True,
     empty_prompt_check=True,
-    # The host knows the runtime, but only reports it in a send response. It is
-    # therefore unavailable while reading, which is a real asymmetry against
-    # tmux: there, the process tree can be checked BEFORE writing. Do not call
-    # this "registry" — that would imply a pre-write check this backend cannot
-    # make.
-    runtime_detection="host_on_dispatch",
+    # terminal.listSessions reports the runtime from the host's own agent
+    # registry, so unlike tmux's process scan it can be trusted before a write.
+    runtime_detection="registry",
 )
 
 
@@ -63,6 +61,8 @@ class SupersetBackend:
         # await_canary needs the exact baseline the send was guarded by.
         self._baseline: object | None = None
         self._last_text: str | None = None
+        self._workspace_of: dict[str, str] = {}
+        self._adapters: dict[str, SupersetAdapter] = {}
 
     @property
     def namespace(self) -> str:
@@ -88,36 +88,82 @@ class SupersetBackend:
         return f"superset:{adapter.config.terminal_id}"
 
     def list_panes(self) -> list[BackendPane]:
+        """Every terminal in every workspace on this host.
+
+        The manifest binds one terminal, but only its endpoint and token are
+        needed to enumerate — so a single-terminal manifest still sees the whole
+        host. Workspaces with no terminals are skipped rather than listed empty.
+        """
         adapter = self._connect()
         try:
-            snapshot = adapter.snapshot(max_lines=1)
-        except TrpcError as error:
+            workspaces = adapter.list_workspaces()
+        except (TrpcError, ValueError) as error:
             raise BackendError(str(error)) from None
-        return [
-            BackendPane(
-                target_id=self._target_id(adapter),
-                label=f"superset terminal {adapter.config.terminal_id[:8]}",
-                # Honest: the host reports runtime only on dispatch, so a read
-                # cannot say what is running here.
-                runtime="unknown",
-                width=snapshot.cols,
-                height=snapshot.rows,
-                dead=False,
-                detail=f"revision {snapshot.revision}",
+
+        panes: list[BackendPane] = []
+        self._workspace_of = {}
+        for workspace in workspaces:
+            workspace_id = workspace.get("id")
+            if not isinstance(workspace_id, str) or not workspace_id:
+                continue
+            try:
+                sessions = adapter.list_terminals(workspace_id)
+            except (TrpcError, ValueError):
+                # One unreadable workspace must not hide the rest of the host.
+                continue
+            name = str(workspace.get("name") or workspace_id[:8])
+            for session in sessions:
+                terminal_id = session.get("terminalId")
+                if not isinstance(terminal_id, str) or not terminal_id:
+                    continue
+                agent = session.get("agent") if isinstance(session.get("agent"), dict) else {}
+                state = str(session.get("state") or "unknown")
+                self._workspace_of[terminal_id] = workspace_id
+                panes.append(
+                    BackendPane(
+                        target_id=f"superset:{terminal_id}",
+                        label=f"{name} / {terminal_id[:8]}",
+                        runtime=str(agent.get("runtime") or "unknown"),
+                        width=0,
+                        height=0,
+                        dead=state == "exited",
+                        detail=state,
+                    )
+                )
+        return panes
+
+    def _adapter_for(self, target_id: str) -> SupersetAdapter:
+        """An adapter bound to one specific terminal.
+
+        snapshot and send both address a (workspace, terminal) pair, so the
+        manifest's own binding is replaced rather than assumed. An unknown
+        terminal is refused instead of silently reading the manifest's one.
+        """
+        base = self._connect()
+        terminal_id = target_id.removeprefix("superset:")
+        workspace_id = self._workspace_of.get(terminal_id)
+        if workspace_id is None:
+            if terminal_id == base.config.terminal_id:
+                return base
+            raise BackendError(
+                f"unknown superset terminal {terminal_id[:8]}; call panes_list first"
             )
-        ]
+        if (
+            terminal_id == base.config.terminal_id
+            and workspace_id == base.config.workspace_id
+        ):
+            return base
+        cached = self._adapters.get(terminal_id)
+        if cached is None:
+            cached = SupersetAdapter(
+                replace(base.config, terminal_id=terminal_id, workspace_id=workspace_id)
+            )
+            self._adapters[terminal_id] = cached
+        return cached
 
     def read_pane(self, target_id: str, lines: int) -> str:
-        adapter = self._connect()
-        expected = self._target_id(adapter)
-        if target_id != expected:
-            # This manifest binds exactly one terminal. Reading a different id
-            # would silently return the wrong terminal's output.
-            raise BackendError(
-                f"this manifest binds {expected}; it cannot read {target_id}"
-            )
         try:
-            return adapter.snapshot(max_lines=lines).text
+            return self._adapter_for(target_id).snapshot(max_lines=lines).text
         except (TrpcError, ValueError) as error:
             raise BackendError(str(error)) from None
 
@@ -137,10 +183,7 @@ class SupersetBackend:
         empty-prompt requirement and a no-repeat flag, and it refuses the write
         itself if any of them no longer hold.
         """
-        adapter = self._connect()
-        expected = self._target_id(adapter)
-        if target_id != expected:
-            raise BackendError(f"this manifest binds {expected}; it cannot send to {target_id}")
+        adapter = self._adapter_for(target_id)
         try:
             baseline = adapter.snapshot(max_lines=1000)
             if canary is not None:
@@ -173,7 +216,7 @@ class SupersetBackend:
     ) -> AcceptanceOutcome:
         if canary is None:
             return AcceptanceOutcome(False, 0, "no_canary")
-        adapter = self._connect()
+        adapter = self._adapter_for(target_id)
         baseline = self._baseline
         if baseline is None:
             raise BackendError("no baseline from a prior send in this process")

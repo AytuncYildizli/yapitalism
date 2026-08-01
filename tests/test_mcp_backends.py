@@ -139,15 +139,18 @@ class SupersetBackendTests(unittest.TestCase):
         # contrast that stops tmux borrowing its guarantees.
         self.assertEqual(capabilities.degraded, ())
 
-    def test_runtime_detection_is_not_claimed_as_a_pre_write_check(self) -> None:
+    def test_runtime_comes_from_the_host_registry_not_a_process_scan(self) -> None:
         from yapitalism.mcp.backends.superset_backend import SupersetBackend
 
-        # The host reports runtime only in a send response, so a read cannot
-        # pre-filter a non-agent target the way the tmux process tree can.
+        # terminal.listSessions returns the runtime from the host's own agent
+        # registry, so it IS available before a write — unlike tmux, which can
+        # only infer it from a process tree that may go stale between the check
+        # and the send.
         self.assertEqual(
             SupersetBackend(manifest_path="/nonexistent").capabilities().runtime_detection,
-            "host_on_dispatch",
+            "registry",
         )
+        self.assertEqual(TmuxBackend().capabilities().runtime_detection, "process_tree")
 
     def test_missing_manifest_is_a_backend_error_not_a_crash(self) -> None:
         from yapitalism.mcp.backends.superset_backend import SupersetBackend
