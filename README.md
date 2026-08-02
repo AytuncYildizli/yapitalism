@@ -133,6 +133,12 @@ docs/architecture.md      component boundaries and evidence model
 - automatic email, DM, or messaging delivery;
 - treating terminal revision movement as command acceptance.
 
+## Credits
+
+The receipt-integrity design came from contributed pull requests that landed through rework, so
+the git history does not name everyone whose work is in the code. See
+[CONTRIBUTORS.md](CONTRIBUTORS.md).
+
 ## Security
 
 Raw transcripts, terminal text, and credentials do not belong in this repository. Ledgers store
