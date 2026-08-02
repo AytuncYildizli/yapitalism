@@ -1,13 +1,16 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "Yapitalism controls coding agents from GPT and Codex Voice";
+export const alt = "Yapitalism — one mic, infinite interns";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
-// This site is `output: "export"`, so the card has to be rendered once at build
-// time rather than per request. Without this the export fails outright — which
-// is preferable to the previous state, where the page advertised
-// twitter:card=summary_large_image and served no image at all.
+// This site is `output: "export"`, so the card is rendered once at build time
+// rather than per request.
 export const dynamic = "force-static";
+
+// Matched to the brand surface in globals.css.
+const INK = "#10110e";
+const ACID = "#e7ff2f";
+const RED = "#ff4d35";
 
 export default function Image() {
 	return new ImageResponse(
@@ -18,88 +21,84 @@ export default function Image() {
 				justifyContent: "space-between",
 				width: "100%",
 				height: "100%",
-				padding: "64px 72px",
-				background: "#f4efe6",
-				color: "#1b1d18",
+				padding: "60px 68px",
+				background: INK,
+				color: "#f5f6ea",
+				// Impact is not available to the renderer; a heavy sans with tight
+				// tracking is the closest approximation of the display face.
 				fontFamily: "Arial, sans-serif",
 			}}
 		>
-			<div style={{ display: "flex", alignItems: "center", gap: "18px" }}>
+			<div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+				<div style={{ display: "flex", fontSize: "26px", fontWeight: 900, letterSpacing: "1px" }}>
+					YAPITALISM™
+				</div>
 				<div
 					style={{
 						display: "flex",
-						alignItems: "center",
-						justifyContent: "center",
-						width: "54px",
-						height: "54px",
-						borderRadius: "10px",
-						background: "#1b1d18",
-						color: "#b9e63b",
-						fontSize: "24px",
+						padding: "9px 13px",
+						border: `1px solid ${ACID}`,
+						background: "#171912",
+						color: ACID,
+						fontSize: "15px",
 						fontWeight: 700,
+						letterSpacing: "1.4px",
 					}}
 				>
-					Y
-				</div>
-				<div style={{ display: "flex", fontSize: "34px", fontWeight: 700 }}>
-					Yapitalism
+					SPEAK → ROUTE → CONTROL
 				</div>
 			</div>
 
-			<div style={{ display: "flex", gap: "54px", alignItems: "flex-end" }}>
-				<div style={{ display: "flex", flex: 1, flexDirection: "column" }}>
-					<div
-						style={{
-							display: "flex",
-							maxWidth: "700px",
-							fontSize: "72px",
-							fontWeight: 600,
-							letterSpacing: "-4px",
-							lineHeight: 0.96,
-						}}
-					>
-						Tell the agents what to do.
-					</div>
-					<div
-						style={{
-							display: "flex",
-							marginTop: "26px",
-							color: "#5d6157",
-							fontSize: "28px",
-						}}
-					>
-						Keep talking while they do it.
-					</div>
-				</div>
-
+			<div style={{ display: "flex", flexDirection: "column" }}>
 				<div
 					style={{
 						display: "flex",
-						flexDirection: "column",
-						gap: "14px",
-						width: "330px",
-						padding: "24px",
-						borderRadius: "18px",
-						background: "#11150f",
-						color: "#f2efe6",
-						fontSize: "18px",
+						alignSelf: "flex-start",
+						marginBottom: "22px",
+						padding: "8px 12px",
+						background: ACID,
+						color: "#080907",
+						fontSize: "17px",
+						fontWeight: 900,
+						letterSpacing: "1.6px",
 					}}
 				>
-					<div style={{ display: "flex", color: "#b9e63b", fontSize: "15px" }}>
-						GPT Voice connected
-					</div>
-					<div style={{ display: "flex", justifyContent: "space-between" }}>
-						<span>Codex</span>
-						<span style={{ color: "#b9e63b" }}>running</span>
-					</div>
-					<div style={{ display: "flex", justifyContent: "space-between" }}>
-						<span>Claude</span>
-						<span style={{ color: "#b9e63b" }}>reviewing</span>
-					</div>
-					<div style={{ display: "flex", justifyContent: "space-between" }}>
-						<span>Kimi</span>
-						<span style={{ color: "#b9e63b" }}>mapped</span>
-					</div>
+					VOICE CONTROL FOR CODING AGENTS
+				</div>
+				<div
+					style={{
+						display: "flex",
+						fontSize: "104px",
+						fontWeight: 900,
+						letterSpacing: "-4px",
+						lineHeight: 0.86,
+					}}
+				>
+					ONE MIC.
+				</div>
+				<div style={{ display: "flex", fontSize: "104px", fontWeight: 900, letterSpacing: "-4px", lineHeight: 0.86 }}>
+					INFINITE{" "}
+					<span style={{ color: ACID, marginLeft: "22px" }}>INTERNS.</span>
+				</div>
+				<div
+					style={{
+						display: "flex",
+						marginTop: "26px",
+						fontSize: "34px",
+						fontWeight: 900,
+						letterSpacing: "-0.5px",
+					}}
+				>
+					TURN YAPPING INTO SHIPPING.
+				</div>
+			</div>
+
+			<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+				<div style={{ display: "flex", color: "#b7bcaa", fontSize: "18px", fontWeight: 700 }}>
+					Codex · Claude · Kimi — from the voice app you already use
+				</div>
+				<div style={{ display: "flex", color: RED, fontSize: "16px", fontWeight: 900, letterSpacing: "1.2px" }}>
+					yapitalism.com
 				</div>
 			</div>
 		</div>,

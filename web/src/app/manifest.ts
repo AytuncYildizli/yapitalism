@@ -18,11 +18,9 @@ export default function manifest(): MetadataRoute.Manifest {
 		description: "Control live coding-agent sessions from GPT or Codex Voice.",
 		start_url: "/",
 		display: "standalone",
-		background_color: "#f4efe6",
-		// The fork uses the dark canvas colour (#11150f) here. An installed app
-		// opens at the top of this page, which is paper, so a dark title bar
-		// would sit directly above a cream header. Matched to what renders.
-		theme_color: "#f4efe6",
+		// Matched to --ink, the brand surface background.
+		background_color: "#10110e",
+		theme_color: "#10110e",
 		icons: [
 			{
 				src: "/icon.svg",
