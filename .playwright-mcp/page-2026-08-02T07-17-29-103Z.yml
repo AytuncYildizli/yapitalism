@@ -1,0 +1,122 @@
+- generic [active] [ref=f1e1]:
+  - main [ref=f1e2]:
+    - generic [ref=f1e3]:
+      - link "Yapitalism home" [ref=f1e4] [cursor=pointer]:
+        - /url: /
+        - generic [ref=f1e5]: "Y"
+        - generic [ref=f1e6]: Yapitalism
+      - navigation "Yapitalism navigation" [ref=f1e7]:
+        - link "Private beta" [ref=f1e8] [cursor=pointer]:
+          - /url: https://github.com/AytuncYildizli/yapitalism
+    - generic [ref=f1e11]:
+      - generic [ref=f1e12]:
+        - paragraph [ref=f1e13]: Yapitalism for GPT and Codex Voice
+        - heading [level=1] [ref=f1e14]:
+          - text: Tell the agents what to do.
+          - emphasis [ref=f1e15]: Keep talking while they do it.
+        - paragraph [ref=f1e16]: Start Codex and keep talking. Redirect Claude or ask Kimi what changed without switching tabs.
+        - generic [ref=f1e17]:
+          - link "Try the private beta" [ref=f1e18] [cursor=pointer]:
+            - /url: https://github.com/AytuncYildizli/yapitalism
+          - link "See it work" [ref=f1e21] [cursor=pointer]:
+            - /url: "#product-demo"
+      - article "A GPT Voice command opening three coding agent sessions" [ref=f1e24]:
+        - generic [ref=f1e25]:
+          - generic [ref=f1e26]:
+            - generic [ref=f1e27]: Yapitalism
+            - generic [ref=f1e28]: Connected
+          - generic [ref=f1e30]: "GPT Voice · Superset host: studio"
+        - generic [ref=f1e31]:
+          - region "Voice conversation" [ref=f1e32]:
+            - generic [ref=f1e39]:
+              - strong [ref=f1e40]: GPT Voice
+              - generic [ref=f1e41]: Listening
+            - blockquote [ref=f1e42]: “Codex, fix checkout. Claude, review the diff. Kimi, map the migration.”
+            - generic [ref=f1e62]:
+              - generic [ref=f1e63]: "Y"
+              - generic [ref=f1e64]:
+                - generic [ref=f1e65]: Yapitalism matched
+                - strong [ref=f1e66]: checkout · diff review · migration
+          - region "Resolved coding agent sessions" [ref=f1e67]:
+            - generic [ref=f1e68]:
+              - generic [ref=f1e69]:
+                - generic [ref=f1e70]: Resolved sessions
+                - strong [ref=f1e71]: 3 live
+              - generic [ref=f1e72]: studio / 3 workspaces
+            - article [ref=f1e73]:
+              - generic [ref=f1e74]:
+                - strong [ref=f1e75]: Codex
+                - generic [ref=f1e76]: Running
+              - paragraph [ref=f1e78]: Fixing checkout session refresh
+              - generic [ref=f1e79]:
+                - generic [ref=f1e80]:
+                  - term [ref=f1e81]: workspace
+                  - definition [ref=f1e82]: checkout
+                - generic [ref=f1e83]:
+                  - term [ref=f1e84]: branch
+                  - definition [ref=f1e85]:
+                    - code [ref=f1e86]: fix/checkout-session
+              - generic [ref=f1e87]:
+                - code [ref=f1e88]: apps/web/src/auth/session.ts
+                - generic [ref=f1e89]: check · auth tests 12/12
+            - article [ref=f1e90]:
+              - generic [ref=f1e91]:
+                - strong [ref=f1e92]: Claude
+                - generic [ref=f1e93]: Reviewing
+              - paragraph [ref=f1e95]: Checking the Codex diff
+              - generic [ref=f1e96]:
+                - generic [ref=f1e97]:
+                  - term [ref=f1e98]: workspace
+                  - definition [ref=f1e99]: checkout review
+                - generic [ref=f1e100]:
+                  - term [ref=f1e101]: branch
+                  - definition [ref=f1e102]:
+                    - code [ref=f1e103]: review/482
+              - generic [ref=f1e104]:
+                - code [ref=f1e105]: apps/web/src/auth/session.test.ts
+                - generic [ref=f1e106]: "check · 1 concern: retry path"
+            - article [ref=f1e107]:
+              - generic [ref=f1e108]:
+                - strong [ref=f1e109]: Kimi
+                - generic [ref=f1e110]: Mapped
+              - paragraph [ref=f1e112]: Tracing the schema migration
+              - generic [ref=f1e113]:
+                - generic [ref=f1e114]:
+                  - term [ref=f1e115]: workspace
+                  - definition [ref=f1e116]: migration
+                - generic [ref=f1e117]:
+                  - term [ref=f1e118]: branch
+                  - definition [ref=f1e119]:
+                    - code [ref=f1e120]: map/schema-v3
+              - generic [ref=f1e121]:
+                - code [ref=f1e122]: packages/db/src/schema
+                - generic [ref=f1e123]: check · 14 tables indexed
+        - generic [ref=f1e124]:
+          - generic [ref=f1e125]:
+            - generic [ref=f1e126]: You · GPT Voice
+            - strong [ref=f1e127]: Same conversation
+          - blockquote [ref=f1e128]: “Keep Codex going. Ask Claude if it’s safe.”
+    - generic [ref=f1e129]:
+      - generic [ref=f1e130]:
+        - paragraph [ref=f1e131]: Voice stays the interface
+        - heading "Talk to one agent or the whole fleet." [level=2] [ref=f1e132]
+      - generic [ref=f1e133]:
+        - paragraph [ref=f1e134]: Yapitalism maps the name you say to a live Superset session. The next thing you say goes back to that session. Risky actions still wait for approval.
+        - link "Try the private beta" [ref=f1e135] [cursor=pointer]:
+          - /url: https://github.com/AytuncYildizli/yapitalism
+        - paragraph [ref=f1e138]:
+          - strong [ref=f1e139]: The names, briefly.
+          - text: Subscription Goblin is the mascot. Goblin Mode is the multi-agent mode. API at Home is the campaign. RelayProof keeps background delivery accountable. Superset runs the backend.
+    - generic [ref=f1e140]:
+      - generic [ref=f1e141]:
+        - link "Yapitalism home" [ref=f1e142] [cursor=pointer]:
+          - /url: /
+          - generic [ref=f1e143]: "Y"
+          - generic [ref=f1e144]: Yapitalism
+        - paragraph [ref=f1e145]: Voice controls the agents. Superset runs the backend.
+      - navigation "Yapitalism footer navigation" [ref=f1e146]:
+        - link "Private beta" [ref=f1e147] [cursor=pointer]:
+          - /url: https://github.com/AytuncYildizli/yapitalism
+        - link "Product demo" [ref=f1e148] [cursor=pointer]:
+          - /url: "#product-demo"
+  - alert [ref=f1e149]
