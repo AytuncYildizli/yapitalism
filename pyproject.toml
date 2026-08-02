@@ -23,6 +23,15 @@ dependencies = [
   "fastmcp>=3.1,<4",
 ]
 
+[project.optional-dependencies]
+# One source of dependency truth. A hand-kept requirements-dev.txt beside
+# pyproject drifts, and drift is how "no declared dependencies at all" survived
+# to a public repo.
+dev = [
+  "build==1.4.0",
+  "ruff==0.15.10",
+]
+
 [project.urls]
 Homepage = "https://yapitalism.com"
 Source = "https://github.com/AytuncYildizli/yapitalism"

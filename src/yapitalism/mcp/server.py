@@ -120,8 +120,14 @@ def await_acceptance_patiently(
 
     started = time.monotonic()
     attempts = 0
-    previous: str | None = None
     changed_last_slice = False
+    # Baseline BEFORE the first slice. Reading only afterwards meant the first
+    # comparison needed a second slice, so any idle_timeout shorter than two
+    # slices could never detect movement at all and always reported idle.
+    try:
+        previous: str | None = backend.read_pane(target_id, 1000)
+    except BackendError:
+        previous = None
     idle_deadline = started + idle_timeout
     hard_deadline = started + max_wait
 
