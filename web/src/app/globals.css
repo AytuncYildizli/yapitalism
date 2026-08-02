@@ -22,3 +22,17 @@ svg {
 	max-width: 100%;
 	height: auto;
 }
+
+/* The page's CSS was authored in the Superset marketing app, which imports
+   Tailwind; its preflight neutralises link styling with
+   `a { color: inherit; text-decoration: inherit }`. yapitalism.module.css is
+   written against that base — it colours .brandNav > a and .navAction itself
+   and expects no underline. This export has no Tailwind, so browser defaults
+   underlined all ten links, including the text inside the pill buttons.
+   Every link here is a nav item, a wordmark or a button, so nothing relies on
+   an underline to read as a link; focus-visible outlines are defined
+   separately. */
+a {
+	color: inherit;
+	text-decoration: none;
+}
