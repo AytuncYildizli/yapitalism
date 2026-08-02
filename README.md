@@ -83,7 +83,7 @@ Needs Python 3.11+ and `tmux`. Everything runs on your machine; nothing is expos
 
 ```bash
 # 1. install
-pipx install git+https://github.com/AytuncYildizli/yapitalism        # or: uv tool install / pip install
+pipx install yapitalism        # or: uv tool install yapitalism / pip install yapitalism
 
 # 2. start the server (loopback only — it refuses to bind anything else)
 yapitalism-mcp
