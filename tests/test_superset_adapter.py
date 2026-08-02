@@ -12,10 +12,16 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
-from relayproof.adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
-from relayproof.model import Leg, LegState
+from yapitalism.adapters.superset import (
+    SupersetAdapter,
+    SupersetConfig,
+    TrpcError,
+    _canary_could_appear,
+    _structured_canary_observed,
+)
+from yapitalism.model import Leg, LegState
 
-CANARY = "RELAYPROOF_ACK_0123456789ABCDEF0123456789ABCDEF"
+CANARY = "YAPITALISM_ACK_0123456789ABCDEF0123456789ABCDEF"
 DELIVERY_ID = "11111111-1111-4111-8111-111111111111"
 
 
@@ -220,6 +226,10 @@ class SupersetAdapterTests(unittest.TestCase):
         self.assertEqual(snapshot.revision, 7)
         evidence = snapshot.to_evidence("cmd-1")
         self.assertIs(evidence.leg, Leg.CAPTURE)
+        self.assertIs(evidence.state, LegState.PENDING)
+        self.assertEqual(evidence.reason, "context_only")
+        self.assertEqual(evidence.source_id, "adapter:superset")
+        self.assertEqual(evidence.target_id, "terminal:terminal-1")
         self.assertNotIn("private terminal text", repr(snapshot))
         self.assertNotIn("private terminal text", evidence.evidence_ref)
         self.assertEqual(
@@ -354,7 +364,11 @@ class SupersetAdapterTests(unittest.TestCase):
             )
         self.assertTrue(sent.dispatched)
         self.assertFalse(sent.prompt_verified)
-        self.assertEqual(sent.to_evidence("a").reason, "prompt_not_verified")
+        evidence = sent.to_evidence("a")
+        self.assertEqual(evidence.reason, "prompt_not_verified")
+        self.assertEqual(evidence.source_id, "adapter:superset")
+        self.assertEqual(evidence.target_id, "terminal:terminal-1")
+        self.assertEqual(evidence.delivery_id, DELIVERY_ID)
 
     def test_contradictory_injected_envelopes_fail_closed(self) -> None:
         responses = iter(
@@ -376,6 +390,33 @@ class SupersetAdapterTests(unittest.TestCase):
                         expected_revision=9,
                         client_token=f"token-{index}",
                         confirm=True,
+                    )
+
+    def test_non_injected_delivery_id_is_bounded_before_evidence_mapping(self) -> None:
+        responses = iter(
+            [
+                send_result(
+                    phase="duplicate_ignored",
+                    submit_sent=False,
+                    duplicate=True,
+                    delivery_id="",
+                    revision_after=None,
+                ),
+                send_result(
+                    phase="duplicate_ignored",
+                    submit_sent=False,
+                    duplicate=True,
+                    delivery_id="x" * 513,
+                    revision_after=None,
+                ),
+            ]
+        )
+        with FakeTrpcServer(lambda *_: next(responses)) as server:
+            adapter = SupersetAdapter(self.config(server.endpoint))
+            for index in range(2):
+                with self.subTest(index=index), self.assertRaisesRegex(TrpcError, "deliveryId"):
+                    adapter.dispatch(
+                        "work", expected_revision=9, client_token=f"bounded-{index}", confirm=True
                     )
 
     def test_dispatch_text_has_utf8_byte_bound_before_network(self) -> None:
@@ -490,6 +531,8 @@ class SupersetAdapterTests(unittest.TestCase):
         self.assertTrue(observed.observed)
         self.assertEqual(observed.attempts, 2)
         self.assertEqual(observed.last_revision, 11)
+        self.assertEqual(observed.evidence.source_id, "adapter:superset")
+        self.assertEqual(observed.evidence.target_id, "terminal:terminal-1")
         with self.assertRaises(ValueError):
             SupersetAdapter(self.config("http://127.0.0.1:9999/trpc")).validate_canary(
                 "CANARY-123", baseline_text="", submitted_text=""
@@ -518,6 +561,19 @@ class SupersetAdapterTests(unittest.TestCase):
         self.assertEqual(missed.attempts, 3)
         self.assertIs(missed.evidence.state, LegState.FAILED)
         self.assertEqual(missed.evidence.reason, "canary_timeout")
+        self.assertEqual(missed.evidence.source_id, "adapter:superset")
+        self.assertEqual(missed.evidence.target_id, "terminal:terminal-1")
+
+    def test_structured_canary_accepts_common_acknowledgement_boundaries(self) -> None:
+        adapter = SupersetAdapter(self.config("http://127.0.0.1:1/trpc"))
+        for rendered in (f"OK {CANARY}", f"ACK: {CANARY}", f"{CANARY} DONE"):
+            with self.subTest(rendered=rendered):
+                with self.assertRaisesRegex(ValueError, "baseline"):
+                    adapter.validate_canary(
+                        CANARY,
+                        baseline_text=rendered,
+                        submitted_text="derive response",
+                    )
 
     def test_revision_reset_during_polling_fails_closed(self) -> None:
         with FakeTrpcServer(lambda *_: snapshot_result(revision=4)) as server:
@@ -534,3 +590,36 @@ class SupersetAdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CanaryGuardSymmetryTests(unittest.TestCase):
+    """The pre-dispatch guard must be looser than the acceptance matcher.
+
+    Acceptance tolerates a hard wrap inside the token, and its boundary
+    assertions are whitespace-sensitive. So a terminal can manufacture a
+    boundary that the submitted text never had: `X<canary>` has no boundary
+    before the canary, but the pane renders it as `X\n<canary>`, which does.
+    If the guard were the stricter of the two, that prompt echo alone would
+    satisfy acceptance — a false GREEN, which this project must never produce.
+    """
+
+    def test_guard_rejects_text_that_wrapping_would_turn_into_acceptance(self) -> None:
+        submitted = "X" + CANARY
+        wrapped_echo = "X\n" + CANARY
+
+        # The echo of that text WOULD be read as acceptance...
+        self.assertTrue(_structured_canary_observed(wrapped_echo, CANARY))
+        # ...so the guard must refuse to let it be dispatched at all.
+        self.assertTrue(_canary_could_appear(submitted, CANARY))
+
+    def test_guard_rejects_a_canary_split_by_a_wrap_in_submitted_text(self) -> None:
+        self.assertTrue(_canary_could_appear(CANARY[:10] + "\n" + CANARY[10:], CANARY))
+
+    def test_guard_allows_unrelated_text(self) -> None:
+        self.assertFalse(_canary_could_appear("deploy the service and report back", CANARY))
+
+    def test_acceptance_still_tolerates_a_wrapped_canary(self) -> None:
+        self.assertTrue(_structured_canary_observed(CANARY[:20] + "\n" + CANARY[20:], CANARY))
+
+    def test_acceptance_still_refuses_a_longer_token(self) -> None:
+        self.assertFalse(_structured_canary_observed(CANARY + "AB", CANARY))

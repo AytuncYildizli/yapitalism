@@ -1,127 +1,194 @@
-# RelayProof
+# Yapitalism
 
-**Evidence-backed reliability for voice-driven agent work.**
+**Drive terminal coding agents by voice, and never let the answer claim more than it proved.**
 
-RelayProof is a local-first receipt and observability harness for commands that cross opaque voice, remote-agent, and terminal boundaries. It tells you what is proven, what is merely observed, and where a command stopped—without pretending to control closed-source voice clients.
+You are away from your desk. You speak; an agent in a terminal does the work; you get a spoken
+reply. That reply is the only thing you have — you cannot see the screen. So the worst failure is
+not a crash, it is the voice saying *"done"* while your text sits unread in a prompt box.
 
-> Private MVP. No production deployment, external messaging, or closed-client automation is included.
+Yapitalism is a local MCP server that lets a voice client reach your coding agents, plus a receipt
+layer that decides what the voice is allowed to say.
 
-## Why
+> Public pre-alpha. Local-only. No production deployment, no external messaging, and no automation
+> of closed-source clients.
 
-A healthy audio indicator does not prove that a command reached an agent. A terminal spinner does not prove acceptance. A handoff claim does not prove where the handoff landed. RelayProof separates these boundaries and requires receipts for each.
+## How it fits together
 
-The initial incident behind this repository:
-
-- iOS `Background conversations` was enabled;
-- the ChatGPT audio session stayed alive in Dynamic Island;
-- spoken progress stopped after backgrounding;
-- two 180-second watchers saw the target terminal remain at revision `920118`;
-- the canary never reached the terminal.
-
-The product is not “fix ChatGPT.” The product is **never fake GREEN**.
-
-## Core model
-
-Each command has five independent legs:
-
-1. `capture` — the user intent was captured;
-2. `dispatch` — a concrete target received a dispatch attempt;
-3. `accept` — the target proved acceptance by canary or explicit acknowledgement;
-4. `work` — material agent progress was observed;
-5. `deliver` — a final update reached the user through Voice or an approved fallback.
-
-Evidence always carries provenance: `api`, `terminal_diff`, `ui_observation`, `user_report`, or `inferred`.
-
-- **GREEN:** all required legs have proven success.
-- **YELLOW:** incomplete or unknown evidence remains.
-- **RED:** a leg failed, timed out, or violated policy.
-
-## Quick start
-
-```bash
-python3 -m unittest discover -s tests -v
-PYTHONPATH=src python3 -m relayproof.cli doctor fixtures/stuck-revision.json
+```
+voice client (ChatGPT / Codex today)
+    │  MCP over loopback HTTP — no public endpoint, no OAuth, no relay
+    ▼
+yapitalism MCP server          panes_list · pane_read · pane_send
+    │
+    ├── superset backend       local host-service over tRPC (127.0.0.1:48900)
+    └── tmux backend           capture-pane / send-keys
 ```
 
-Expected doctor result for the reproduced incident:
+The voice client never reaches your machine directly: it drives a local agent session, and that
+session talks to this server over `127.0.0.1`. Nothing is exposed to the network.
 
-```text
-RED command=voice-canary-20260730 failed=accept reason=canary_timeout
-```
+## The part that matters: receipts
 
-## Real Superset adapter
+`pane_send` returns a verdict, not a shrug.
 
-RelayProof talks directly to the local Superset host-service tRPC surface. It does not use a fixture for these operations.
+| | meaning |
+| --- | --- |
+| **GREEN** | the agent echoed a one-time marker. It demonstrably processed the text. |
+| **YELLOW** | the write landed; processing was **not** proven. Never round this up. |
+| **RED** | the backend refused the write. Nothing reached the terminal. |
 
-Create an explicit owner-only manifest outside the repository:
+`YELLOW` is the whole point. Text left unsubmitted in an agent's input box looks identical to work
+in progress from outside — same spinner, same scrolling output, same HTTP 200. A voice that rounds
+that up to "done" costs you hours before you notice.
+
+Explicitly **not** acceptance: an HTTP 2xx, a PTY write returning, terminal output changing, a
+revision advancing, or the prompt echoing your own words back.
+
+### Waiting is not the same as failing
+
+A fixed deadline reports on the clock, not on the agent. An agent that thinks for a minute and
+then answers correctly was verified all along, and calling that YELLOW teaches an operator to
+ignore YELLOW. So the wait is an **idle** timeout: it restarts whenever the pane changes, bounded
+by a hard ceiling.
+
+Pane movement decides only whether to keep waiting. It is never evidence of acceptance — that
+stays the canary alone. A YELLOW therefore says which kind it is:
+
+- `canary_timeout_pane_moving` — the pane's text was still changing. Named after what was
+  measured: a spinner, a clock, a log tail or a second agent sharing the pane all produce this
+  without the intended agent doing anything. It is a hint that looking again may be worth it,
+  never a claim that the agent is working.
+- `canary_timeout_pane_still` — nothing moved at all.
+
+What remains irreducible: if an agent silently ignores the text and prints nothing, no mechanism
+here can distinguish that from an agent that never received it. Verification needs the agent to
+emit something.
+
+### Backends do not prove the same things
+
+Every receipt carries the guarantees its backend could not enforce:
 
 ```json
-{
-  "endpoint": "http://127.0.0.1:48900/trpc",
-  "bearer_token": "<host-service-secret>",
-  "workspace_id": "<workspace-id>",
-  "terminal_id": "<terminal-id>"
-}
+{ "status": "GREEN",
+  "missing_guarantees": ["idempotent_dispatch", "optimistic_revision", "empty_prompt_check"] }
 ```
+
+Superset's host refuses a write unless the revision still matches, the client token is unused, and
+the prompt is empty. `tmux send-keys` enforces none of that. Both can reach GREEN; they are not the
+same GREEN, and saying so is the difference between a receipt and a decoration.
+
+## Install
+
+Needs Python 3.11+ and `tmux`. Everything runs on your machine; nothing is exposed to the network.
 
 ```bash
-chmod 600 /path/to/relayproof-superset.json
+# 1. install
+pipx install git+https://github.com/AytuncYildizli/yapitalism        # or: uv tool install / pip install
 
-# Real, read-only terminal.snapshot. Raw terminal text is never printed.
-PYTHONPATH=src python3 -m relayproof.cli superset status \
-  --manifest /path/to/relayproof-superset.json
+# 2. start the server (loopback only — it refuses to bind anything else)
+yapitalism-mcp
 
-# Zero-network dry run. This is the default for send.
-PYTHONPATH=src python3 -m relayproof.cli superset send \
-  --manifest /path/to/relayproof-superset.json \
-  --text '<prompt whose literal text does not contain the expected marker>' \
-  --canary 'RELAYPROOF_ACK_<32-uppercase-hex-characters>' \
-  --expect-revision <reviewed-revision>
-
-# A real terminal.send requires the dry-run command_id to be reused exactly.
-# Add: --client-token <command_id-from-dry-run> --confirm-send
+# 3. point your voice client's agent at it, in another shell
+codex mcp add yapitalism --url http://127.0.0.1:8792/mcp
 ```
 
-The confirmed path snapshots immediately before dispatch, rejects a changed revision, sends `requireEmptyPrompt=true`, `allowRepeat=false`, a stable `clientToken`, and the exact `expectRevision`, then polls snapshots against a monotonic deadline. HTTP 2xx, PTY revision movement, Superset `verified`, and prompt echo never prove acceptance. Only a command-correlated post-dispatch canary can do that.
+Then talk to the voice app: *"list my panes"*, then *"send this to the Codex pane"*.
 
-Security boundaries: loopback-only `/trpc`, no redirects or ambient proxies, bounded responses, strict `0600` non-symlink manifests, redacted bearer/token handling, and no automatic POST retry after an ambiguous transport failure.
+`YAPITALISM_MCP_PORT` moves the port if 8792 is taken. `YAPITALISM_TMUX_SOCKET` targets a
+non-default tmux server.
+
+### Keeping it running
+
+The voice route dies when the server does, so on macOS run it as a login agent —
+`.agents/launchd/` has the plist and a README. Kill any shell instance first, or the two fight
+over the port.
+
+### Superset terminals (optional)
+
+The tmux backend needs nothing. To also reach Superset-managed terminals, the backend reads a
+`0600` manifest holding the host endpoint and token, from
+`~/.cache/superset-watch-voice/yapitalism-manifest.json` or `$YAPITALISM_SUPERSET_MANIFEST`.
+Without it `panes_list` still returns your tmux panes and reports Superset in `errors` — a
+backend that could not be reached is never silently reported as "no terminals".
+
+### Teaching the voice how to speak the receipts
+
+`.agents/skills/superset-operator/` holds the policy that stops a model rounding YELLOW up to
+"done", plus a drift check against the copy your agent actually loads.
+
+## The receipt core, on its own
+
+The five-leg model is usable without the MCP server:
+
+1. `capture` — the intent was captured
+2. `dispatch` — a concrete target received a write attempt
+3. `accept` — the target proved acceptance by canary or explicit acknowledgement
+4. `work` — material agent progress was observed
+5. `deliver` — a final update reached the user
+
+Evidence carries provenance — `api`, `terminal_diff`, `ui_observation`, `user_report`, `inferred` —
+and `inferred` may never mark a leg succeeded. Events append to a `0600` JSONL ledger with a
+per-row hash chain, contiguous sequence, and single-use confirmation claims for anything that
+mutates a terminal.
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests -v
+PYTHONPATH=src python3 -m yapitalism.cli doctor fixtures/stuck-revision.json
+# RED command=voice-canary-20260730 failed=accept reason=canary_timeout
+```
+
+That fixture is the incident this project came from: the audio session stayed alive, spoken progress
+stopped, two 180-second watchers saw the terminal frozen at revision `920118`, and the canary never
+arrived. The product is not "fix the voice client". It is **never fake GREEN**.
+
+CLI surface: `doctor`, `receipt show`, `ledger verify|manifest|migrate`, and `superset status|send`.
+A confirmed `superset send` requires reusing the exact `client-token` a dry run emitted, snapshots
+immediately before dispatch, rejects a changed revision, and never retries an ambiguous POST.
+
+## Known limits
+
+Stated plainly, because a receipt system that overclaims is worse than none:
+
+- **Tail truncation is undetectable.** Deleting the last ledger rows leaves a prefix that still
+  verifies. Catching it needs an anchor outside the file — see `docs/adr/0004`.
+- **The ledger attests to itself.** Hash verification proves rows were not edited or reordered; it
+  does not prove who wrote them, and a wholly fabricated ledger verifies fine.
+- **tmux cannot refuse a duplicate or an occupied prompt.** Declared per receipt, never worked
+  around.
+- **A tmux pane's runtime can go stale** between the check and the write. Superset's comes from the
+  host's own registry and cannot.
+- Connector-in-voice behaviour in closed clients is undocumented and can change without notice.
 
 ## Repository map
 
 ```text
-src/relayproof/      typed core, canary matching, ledger, CLI
-tests/                  deterministic unit and replay tests
-fixtures/               scrubbed incident replays
-docs/architecture.md    component boundaries and evidence model
-docs/roadmap.md         Gate 0 and 30/60/90 roadmap
-docs/adr/               load-bearing architecture decisions
+src/yapitalism/mcp/       MCP server, backend registry, receipts, tmux driver
+src/yapitalism/adapters/  Superset host-service client
+src/yapitalism/           receipt core: model, canary, claims, ledger, CLI
+tests/                    deterministic unit, replay, and real-tmux tests
+fixtures/                 scrubbed incident replays
+.agents/skills/           voice policy + drift check
+.agents/launchd/          run the server as a login agent
+docs/adr/                 load-bearing decisions
+docs/architecture.md      component boundaries and evidence model
 ```
 
-## Scope
+## Explicit non-goals
 
-### Build now
-
-- deterministic receipt projection;
-- deadman timeouts;
-- canary normalization and matching;
-- append-only redacted local ledger;
-- Superset adapter contract and replay fixtures;
-- CLI doctor/status output;
-- manual iOS foreground/background test protocol.
-
-### Explicit non-goals
-
-- reverse-engineering or patching ChatGPT iOS/OpenAI internals;
-- inventing background-turn or Voice-push APIs;
-- an iOS companion app;
+- reverse-engineering or patching closed voice-client internals;
+- inventing background-turn or push APIs that do not exist;
 - multi-tenant SaaS;
 - automatic email, DM, or messaging delivery;
 - treating terminal revision movement as command acceptance.
 
+## Credits
+
+The receipt-integrity core was written by [@liri-ha](https://github.com/liri-ha), whose commits
+are carried here unrewritten. See [CONTRIBUTORS.md](CONTRIBUTORS.md).
+
 ## Security
 
-Raw transcripts and credentials do not belong in this repository. Ledgers store bounded metadata, hashes, and classifications—not raw terminal output. See [SECURITY.md](SECURITY.md).
-
-## Status
-
-`0.1.0-dev` — professional scaffold with a tested receipt core. The Superset adapter and device probes remain roadmap work.
+Raw transcripts, terminal text, and credentials do not belong in this repository. Ledgers store
+bounded metadata, hashes, and classifications. A manifest holding a bearer token lives outside the
+repo at mode `0600` and is read only when its path is passed explicitly; it is never printed. See
+[SECURITY.md](SECURITY.md).

@@ -15,4 +15,4 @@ Do not open a public issue containing credentials, terminal transcripts, handoff
 
 ## Supported versions
 
-The repository is pre-alpha and private. Only the latest `main` branch is supported.
+The repository is public pre-alpha. Only the latest `main` branch is supported.

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.yapitalism.mcp</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>-m</string>
+    <string>yapitalism.mcp.server</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key><string>/Users/aytuncyildizli/.superset/projects/relayproof/src</string>
+    <key>YAPITALISM_MCP_HOST</key><string>127.0.0.1</string>
+    <key>YAPITALISM_MCP_PORT</key><string>8792</string>
+  </dict>
+  <key>WorkingDirectory</key><string>/Users/aytuncyildizli/.superset/projects/relayproof</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/aytuncyildizli/Library/Logs/yapitalism-mcp.log</string>
+  <key>StandardErrorPath</key><string>/Users/aytuncyildizli/Library/Logs/yapitalism-mcp.log</string>
+  <key>ProcessType</key><string>Background</string>
+</dict>
+</plist>

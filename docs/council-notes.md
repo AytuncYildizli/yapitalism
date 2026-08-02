@@ -13,7 +13,7 @@ The initial roadmap was reviewed by independent GPT, DS4, Grok, Claude Opus, and
 Notable dissent:
 
 - one lane argued the primary canary miss may be wrong-target or ended-turn behavior rather than a general Remote stall;
-- the strongest naming candidates were `relayproof` (GPT), `backchannel` (Claude), `readback` (Kimi), and `voice-receipt` (Grok);
-- the initial `voice-receipt` working name was replaced by `relayproof` before collaborator onboarding because it is more product-grade while still naming proof across unreliable boundaries.
+- the strongest naming candidates were `yapitalism` (GPT), `backchannel` (Claude), `readback` (Kimi), and `voice-receipt` (Grok);
+- the initial `voice-receipt` working name was replaced by `yapitalism` before collaborator onboarding because it is more product-grade while still naming proof across unreliable boundaries.
 
 The council is advisory. Repository behavior is governed by executable tests and direct evidence, not model consensus.

@@ -1,0 +1,322 @@
+/* Yapitalism brand surface — goblin v0.2.
+   Ported from design-candidates/goblin-v0.2.html. Global rather than a CSS
+   module because it is a complete document style: reset, :root tokens and
+   element selectors, which scoping would break.
+
+   Fonts are self-hosted. The prototype pulled Anton/Archivo/Martian Mono from
+   fonts.googleapis.com, which this site's CSP (default-src 'self') blocks
+   outright - the page would have silently fallen back to Impact and system
+   sans, losing the entire typographic identity. Latin and latin-ext subsets
+   only. */
+
+@font-face {
+  font-family: 'Anton';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/anton-400-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Anton';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/anton-400-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/archivo-400-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/archivo-400-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/archivo-600-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/archivo-600-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/archivo-700-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/archivo-700-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Martian Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/martian-mono-400-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Martian Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/martian-mono-400-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Martian Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/martian-mono-700-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Martian Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/martian-mono-700-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ── tokens: straight off the brand board, not reinvented ─────────────── */
+:root{
+  --paper:#f3eedb;
+  --ink:#10110e;
+  --acid:#e7ff2f;
+  --red:#ff4d35;
+  --blue:#b8d8ff;
+  --muted:#8d8f7e;
+  --hard:6px 6px 0 var(--ink);
+  --hard-lg:10px 10px 0 var(--ink);
+  --poster:"Anton",Impact,sans-serif;
+  --body:"Archivo",system-ui,sans-serif;
+  --mono:"Martian Mono",ui-monospace,monospace;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--body);font-size:clamp(15px,.5vw + 13.5px,17px);line-height:1.5;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden;
+}
+/* newsprint tooth over everything, the way the poster has it */
+body::after{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:99;opacity:.32;
+  background-image:radial-gradient(var(--ink) .6px,transparent .6px);
+  background-size:4px 4px;mix-blend-mode:multiply;
+}
+.wrap{max-width:84rem;margin:0 auto;padding:0 clamp(1rem,3.5vw,2.75rem)}
+
+/* ── bar ──────────────────────────────────────────────────────────────── */
+.bar{
+  border-bottom:3px solid var(--ink);
+  display:flex;align-items:center;gap:1rem;flex-wrap:wrap;
+  padding:.8rem clamp(1rem,3.5vw,2.75rem);
+  font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;
+}
+.mark{font-family:var(--poster);font-size:1.5rem;letter-spacing:.01em;line-height:1}
+.mark i{background:var(--acid);font-style:normal;padding:0 .1em;box-decoration-break:clone}
+.bar .push{margin-left:auto}
+.tag{border:2px solid var(--ink);border-radius:999px;padding:.3rem .8rem}
+
+/* ── hero poster ──────────────────────────────────────────────────────── */
+.hero{
+  display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);
+  gap:clamp(1.5rem,4vw,3.5rem);align-items:center;
+  padding:clamp(2rem,5vw,4rem) 0 clamp(2.5rem,5vw,4rem);
+}
+@media (max-width:940px){.hero{grid-template-columns:minmax(0,1fr)}}
+
+.eyebrow{
+  display:inline-flex;align-items:center;gap:.6rem;margin:0 0 1rem;
+  font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;
+}
+.eyebrow::before{content:"";width:2.4rem;height:.7rem;background:var(--red);border:2px solid var(--ink)}
+
+h1{
+  margin:0 0 1.1rem;font-family:var(--poster);font-weight:400;
+  font-size:clamp(3.4rem,11.5vw,8.5rem);line-height:.84;letter-spacing:-.015em;
+  text-transform:uppercase;
+}
+/* the one word that carries the joke gets the print-misregistration treatment */
+h1 .hit{
+  color:var(--red);
+  text-shadow:5px 5px 0 var(--acid);
+  display:inline-block;
+}
+.sub{margin:0 0 1.1rem;font-size:1.14rem;font-weight:600;max-width:32ch}
+.sub mark{background:var(--acid);padding:0 .12em}
+.spec{
+  margin:0 0 1.6rem;font-family:var(--mono);font-size:.66rem;letter-spacing:.06em;
+  text-transform:uppercase;color:#5d5f52;
+}
+.acts{display:flex;gap:.9rem;flex-wrap:wrap}
+.btn{
+  font-family:var(--mono);font-size:.74rem;font-weight:700;letter-spacing:.06em;
+  text-transform:uppercase;text-decoration:none;
+  border:3px solid var(--ink);padding:.8rem 1.15rem;background:var(--ink);color:var(--paper);
+  box-shadow:var(--hard);transition:transform .1s ease,box-shadow .1s ease;
+}
+.btn.alt{background:var(--acid);color:var(--ink)}
+.btn:hover{transform:translate(-2px,-2px);box-shadow:9px 9px 0 var(--ink)}
+.btn:active{transform:translate(3px,3px);box-shadow:2px 2px 0 var(--ink)}
+.btn:focus-visible{outline:3px solid var(--red);outline-offset:3px}
+
+/* goblin card, tilted like it was taped on */
+.card{position:relative;transform:rotate(1.4deg)}
+.card img{
+  display:block;width:100%;height:auto;border:3px solid var(--ink);box-shadow:var(--hard-lg);
+}
+.burst{
+  position:absolute;bottom:-1.8rem;left:-1.6rem;width:8.4rem;height:8.4rem;
+  display:grid;place-items:center;text-align:center;transform:rotate(-13deg);
+  background:var(--acid);
+  clip-path:polygon(50% 0,61% 18%,82% 9%,80% 32%,100% 38%,86% 55%,99% 74%,76% 74%,72% 96%,53% 83%,36% 99%,30% 77%,8% 80%,17% 58%,0 44%,20% 33%,14% 11%,37% 18%);
+  font-family:var(--poster);font-size:.92rem;line-height:1.02;letter-spacing:.01em;
+  text-transform:uppercase;padding:1.6rem .9rem;
+}
+@media (max-width:940px){.burst{width:6.6rem;height:6.6rem;font-size:.74rem;bottom:-1.2rem;left:-.6rem}}
+
+/* ── goblin mode: the signature. one switch, the whole page changes job ── */
+.mode{border-top:3px solid var(--ink);border-bottom:3px solid var(--ink);background:var(--blue)}
+.modeIn{padding-block:clamp(1.8rem,4vw,3rem)}
+.modeHead{display:flex;align-items:flex-end;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.5rem}
+.modeHead h2{
+  margin:0;font-family:var(--poster);font-weight:400;text-transform:uppercase;
+  font-size:clamp(1.6rem,4.4vw,2.9rem);line-height:.9;letter-spacing:-.01em;
+}
+.switch{
+  margin-left:auto;display:flex;align-items:center;gap:.9rem;
+  font-family:var(--mono);font-size:.7rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+}
+.switch button{
+  all:unset;cursor:pointer;width:5.6rem;height:2.6rem;
+  border:3px solid var(--ink);background:var(--paper);box-shadow:var(--hard);
+  display:flex;align-items:center;padding:.2rem;
+}
+.switch button:focus-visible{outline:3px solid var(--red);outline-offset:3px}
+.knob{width:2.2rem;height:1.8rem;background:var(--ink);transition:transform .16s cubic-bezier(.4,0,.2,1)}
+[data-goblin="on"] .knob{transform:translateX(2.4rem);background:var(--red)}
+[data-goblin="on"] .switch button{background:var(--acid)}
+.state{min-width:9ch}
+
+.entered{
+  font-family:var(--poster);text-transform:uppercase;font-size:clamp(1rem,2.6vw,1.5rem);
+  line-height:1;margin:0 0 1.2rem;padding:.55rem .8rem;background:var(--ink);color:var(--acid);
+  display:inline-block;opacity:0;transform:translateY(-6px);transition:opacity .2s,transform .2s;
+}
+[data-goblin="on"] .entered{opacity:1;transform:none}
+
+.crew{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.9rem}
+@media (max-width:820px){.crew{grid-template-columns:minmax(0,1fr)}}
+.intern{
+  background:var(--paper);border:3px solid var(--ink);padding:.9rem;
+  box-shadow:var(--hard);position:relative;
+  transition:opacity .22s ease,filter .22s ease;
+}
+[data-goblin="off"] .intern:nth-child(n+2){opacity:.34;filter:saturate(.1)}
+[data-goblin="off"] .intern:nth-child(n+2)::after{
+  content:"on the bench";position:absolute;inset:auto .9rem .9rem auto;
+  font-family:var(--mono);font-size:.6rem;letter-spacing:.06em;text-transform:uppercase;
+}
+[data-goblin="on"] .intern:nth-child(2){transition-delay:.09s}
+[data-goblin="on"] .intern:nth-child(3){transition-delay:.18s}
+.intern .who{
+  display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;
+  font-family:var(--mono);font-size:.7rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+}
+.intern .who em{font-style:normal;color:var(--red)}
+.intern p{margin:.55rem 0 .6rem;font-weight:600;font-size:1.02rem;line-height:1.25}
+.intern .log{
+  font-family:var(--mono);font-size:.63rem;letter-spacing:.02em;color:#5d5f52;
+  border-top:2px solid var(--ink);padding-top:.5rem;
+}
+.intern .log b{color:var(--ink);font-weight:400}
+
+.receipt{
+  margin-top:1.4rem;border:3px solid var(--ink);background:var(--paper);
+  font-family:var(--mono);font-size:.66rem;letter-spacing:.04em;text-transform:uppercase;
+}
+.receipt div{padding:.5rem .8rem;border-bottom:2px dashed var(--ink)}
+[data-goblin="off"] .receipt div:nth-child(n+2){display:none}
+[data-goblin="on"] .receipt div{opacity:0;transform:translateX(-8px)}
+.receipt div:last-child{border-bottom:0}
+[data-goblin="on"] .receipt div{animation:print .24s ease forwards}
+[data-goblin="on"] .receipt div:nth-child(1){animation-delay:.12s}
+[data-goblin="on"] .receipt div:nth-child(2){animation-delay:.3s}
+[data-goblin="on"] .receipt div:nth-child(3){animation-delay:.48s}
+[data-goblin="on"] .receipt div:nth-child(4){animation-delay:.66s}
+@keyframes print{to{opacity:1;transform:none}}
+
+/* ── three beats ──────────────────────────────────────────────────────── */
+.beats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;padding:clamp(2rem,4vw,3.2rem) 0}
+@media (max-width:820px){.beats{grid-template-columns:minmax(0,1fr)}}
+.beat{padding:0 clamp(1rem,2vw,1.8rem);border-left:3px solid var(--ink)}
+.beat:first-child{padding-left:0;border-left:0}
+.beat h3{
+  margin:0 0 .5rem;font-family:var(--poster);font-weight:400;text-transform:uppercase;
+  font-size:2rem;line-height:.92;letter-spacing:-.01em;
+}
+.beat h3 span{background:var(--acid);padding:0 .1em}
+.beat p{margin:0;color:#4a4c40}
+
+/* ── close ────────────────────────────────────────────────────────────── */
+.close{border-top:3px solid var(--ink);background:var(--ink);color:var(--paper)}
+.closeIn{padding-block:clamp(2rem,4vw,3rem);display:grid;gap:1.4rem}
+.closeIn h2{
+  margin:0;font-family:var(--poster);font-weight:400;text-transform:uppercase;
+  font-size:clamp(2rem,6.5vw,4rem);line-height:.88;letter-spacing:-.01em;
+}
+.closeIn h2 em{font-style:normal;color:var(--acid)}
+.legal{
+  font-family:var(--mono);font-size:.62rem;letter-spacing:.04em;line-height:1.7;
+  color:#9d9f90;max-width:62ch;
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms !important;transition-duration:.01ms !important}
+}
+
+/* --- fixes on top of the prototype ------------------------------------- */
+
+/* .beats stacks at 820px but keeps gap:0, so each h3's acid highlight box -
+   tight at line-height .92 - collided with the paragraph above it. Give the
+   stacked column real separation and move the rule to the top edge. */
+@media (max-width:820px){
+  .beats{gap:1.6rem}
+  .beat{padding:1.4rem 0 0;border-left:0;border-top:3px solid var(--ink)}
+  .beat:first-child{padding-top:0;border-top:0}
+}
+
+/* Anton's caps are tall enough that line-height .88 makes the two lines of the
+   closing headline touch on narrow screens. */
+@media (max-width:640px){
+  .closeIn h2{line-height:.96}
+}

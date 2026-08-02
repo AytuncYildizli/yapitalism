@@ -8,13 +8,13 @@ Build a real, local-first Superset host adapter that can read terminal snapshots
 
 ### Build
 
-- `relayproof.adapters.superset` package.
+- `yapitalism.adapters.superset` package.
 - Explicit typed config for endpoint, bearer token, workspace id, and terminal id.
 - Minimal tRPC GET/POST client using the Python standard library.
 - `snapshot()` using real `terminal.snapshot`.
 - `dispatch()` using real `terminal.send` with idempotent client token and expected revision.
 - `await_canary()` using bounded snapshot polling and the existing line-wrap-safe matcher.
-- Mapping from adapter observations to RelayProof evidence events.
+- Mapping from adapter observations to Yapitalism evidence events.
 - CLI read-only status command.
 - CLI send/canary command that defaults dry-run and requires an explicit confirmation switch.
 - Unit/contract tests with a local fake HTTP server and captured scrubbed envelopes.
@@ -30,8 +30,7 @@ Build a real, local-first Superset host adapter that can read terminal snapshots
 
 ## Contracts
 
-- Host source of truth:
-  `/Users/aytuncyildizli/hermes-workspace/research-intake/superset-voice-current-main/packages/host-service/src/trpc/router/terminal/terminal.ts`
+- Host source of truth: the operator-reviewed Superset host-service terminal tRPC router.
 - Live host manifests remain outside Git and are read only when an operator passes a path.
 - `terminal.snapshot` is read-only.
 - `terminal.send` is side-effecting and must receive: terminal/workspace ids, exact text, submit intent, unique client token, empty-prompt policy, repeat policy, and expected revision.

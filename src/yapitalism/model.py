@@ -36,6 +36,9 @@ class Provenance(str, Enum):
 
 _ACCEPTANCE_KINDS = frozenset({"canary.observed", "agent.acknowledged"})
 _REQUIRED_LEGS = tuple(Leg)
+# Evidence that describes surrounding context rather than proving a leg. Reading
+# a terminal says nothing about whether the user's intent was captured.
+_CONTEXT_ONLY_KINDS = frozenset({"terminal.snapshot"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +54,13 @@ class EvidenceEvent:
     )
     reason: str = ""
     evidence_ref: str = ""
+    sequence: int | None = None
+    supersedes: str | None = None
+    actor_id: str | None = None
+    source_id: str | None = None
+    target_id: str | None = None
+    session_id: str | None = None
+    delivery_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.event_id.strip() or not self.command_id.strip() or not self.kind.strip():
@@ -63,6 +73,14 @@ class EvidenceEvent:
             and self.kind not in _ACCEPTANCE_KINDS
         ):
             raise ValueError("accept requires canary.observed or agent.acknowledged")
+        if self.sequence is not None and self.sequence <= 0:
+            raise ValueError("sequence must be positive when provided")
+        if self.supersedes is not None and not self.supersedes.strip():
+            raise ValueError("supersedes must be non-empty when provided")
+        for field_name in ("actor_id", "source_id", "target_id", "session_id", "delivery_id"):
+            value = getattr(self, field_name)
+            if value is not None and (not value.strip() or len(value) > 512):
+                raise ValueError(f"{field_name} must be a bounded non-empty value when provided")
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -92,9 +110,58 @@ class Receipt:
 
     def latest_by_leg(self) -> dict[Leg, EvidenceEvent]:
         latest: dict[Leg, EvidenceEvent] = {}
-        for event in self._events:
+        for event in self.effective_events():
+            # Context-only is a property of the evidence KIND, not of a state or
+            # a reason string. Scoping it this way closes two holes at once:
+            #
+            #  - a ledger written before snapshots became PENDING still holds
+            #    `terminal.snapshot` rows recorded SUCCEEDED, and those must
+            #    stop counting as capture proof rather than only new ones;
+            #  - keying on `reason == "context_only"` let any event opt out of
+            #    the projection, so appending a newer PENDING ACCEPT with that
+            #    reason silently dropped the leg's uncertainty and left an
+            #    older success current — GREEN instead of YELLOW.
+            if event.kind in _CONTEXT_ONLY_KINDS:
+                continue
             latest[event.leg] = event
         return latest
+
+    def effective_events(self) -> tuple[EvidenceEvent, ...]:
+        indexed = list(enumerate(self._events))
+        ordered = [
+            event
+            for _, event in sorted(
+                indexed,
+                key=lambda pair: (
+                    pair[1].sequence if pair[1].sequence is not None else pair[0] + 1,
+                    pair[0],
+                ),
+            )
+        ]
+        # Supersession is deliberately restricted to the same leg. Unconstrained,
+        # any event could delete any other: appending a CAPTURE success that
+        # supersedes an ACCEPT failure would drop that failure, resurrect an
+        # older ACCEPT success, and turn a RED receipt GREEN. A leg may correct
+        # its own record and nothing else.
+        by_id = {event.event_id: event for event in ordered}
+        position = {event.event_id: index for index, event in enumerate(ordered)}
+        superseded: set[str] = set()
+        for index, event in enumerate(ordered):
+            target_id = event.supersedes
+            if target_id is None or target_id == event.event_id:
+                # Self-supersession would let a failed event delete itself and
+                # resurrect the older success on its leg.
+                continue
+            target = by_id.get(target_id)
+            if target is None or target.leg is not event.leg:
+                continue
+            if position[target_id] >= index:
+                # Only an earlier event may be corrected. Forward references —
+                # and therefore every cycle, which needs at least one — would
+                # otherwise erase evidence that arrived after the correction.
+                continue
+            superseded.add(target_id)
+        return tuple(event for event in ordered if event.event_id not in superseded)
 
     @property
     def status(self) -> Status:
@@ -112,7 +179,8 @@ class Receipt:
 
     @property
     def failed_event(self) -> EvidenceEvent | None:
-        for event in reversed(self._events):
+        latest = tuple(self.latest_by_leg().values())
+        for event in reversed(latest):
             if event.state is LegState.FAILED:
                 return event
         return None

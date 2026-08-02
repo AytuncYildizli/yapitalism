@@ -17,7 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
-from ...canary import normalize_terminal_text
+from ...canary import strip_terminal_decoration
 from ...model import EvidenceEvent, Leg, LegState, Provenance
 
 _MANIFEST_MAX_BYTES = 64 * 1024
@@ -232,10 +232,13 @@ class TerminalSnapshot:
             event_id=str(uuid.uuid4()),
             command_id=command_id,
             leg=Leg.CAPTURE,
-            state=LegState.SUCCEEDED,
+            state=LegState.PENDING,
             kind="terminal.snapshot",
             provenance=Provenance.API,
+            reason="context_only",
             evidence_ref=f"terminal:{self.terminal_id}:revision:{self.revision}",
+            source_id="adapter:superset",
+            target_id=f"terminal:{self.terminal_id}",
         )
 
 
@@ -291,6 +294,9 @@ class DispatchResult:
             provenance=Provenance.API,
             reason=reason,
             evidence_ref=evidence_ref,
+            source_id="adapter:superset",
+            target_id=f"terminal:{self.terminal_id}",
+            delivery_id=self.delivery_id,
         )
 
 
@@ -313,7 +319,7 @@ class _TrpcTransport:
         payload: dict[str, object],
         *,
         timeout: float | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         wire = json.dumps({"json": payload}, separators=(",", ":"))
         url = f"{self.config.endpoint}/{procedure}?{urlencode({'input': wire})}"
         return self._request(Request(url, headers=self._headers(), method="GET"), timeout)
@@ -361,9 +367,9 @@ class _TrpcTransport:
         data = cast(dict[str, Any], result).get("data")
         if isinstance(data, dict) and "json" in data:
             data = cast(dict[str, Any], data)["json"]
-        if not isinstance(data, dict):
-            raise TrpcError("Superset tRPC result was not an object")
-        return cast(dict[str, Any], data)
+        if not isinstance(data, (dict, list)):
+            raise TrpcError("Superset tRPC result was not an object or array")
+        return cast(Any, data)
 
 
 class SupersetAdapter:
@@ -399,6 +405,36 @@ class SupersetAdapter:
             cols=_required_positive_int(data, "cols"),
             rows=_required_positive_int(data, "rows"),
         )
+
+    def list_workspaces(self) -> list[dict[str, Any]]:
+        """Every workspace on this host.
+
+        Uses only the endpoint and token from the manifest; the terminal it
+        binds is irrelevant here, which is what makes enumeration possible from
+        a single-terminal manifest.
+        """
+        data = self._transport.query("workspace.list", {})
+        if not isinstance(data, list):
+            raise TrpcError("Superset workspace.list did not return an array")
+        return [row for row in cast(list[Any], data) if isinstance(row, dict)]
+
+    def list_terminals(self, workspace_id: str) -> list[dict[str, Any]]:
+        """Terminal sessions in one workspace, with the host's own runtime.
+
+        The runtime here comes from the host's agent registry rather than a
+        process scan, so unlike tmux it can be trusted before a write.
+        """
+        if not workspace_id.strip():
+            raise ValueError("workspace_id must not be empty")
+        data = self._transport.query("terminal.listSessions", {"workspaceId": workspace_id})
+        if not isinstance(data, dict):
+            raise TrpcError("Superset terminal.listSessions did not return an object")
+        sessions = cast(dict[str, Any], data).get("sessions")
+        if not isinstance(sessions, list):
+            # The wrapper object is load-bearing: treating a missing `sessions`
+            # as "no terminals" would report an empty workspace for a broken read.
+            raise TrpcError("Superset terminal.listSessions omitted sessions")
+        return [row for row in cast(list[Any], sessions) if isinstance(row, dict)]
 
     def dispatch(
         self,
@@ -468,6 +504,8 @@ class SupersetAdapter:
             raise TrpcError("Superset response field target was invalid")
         runtime = _required_enum(cast(dict[str, Any], target), "runtime", _RUNTIMES)
         delivery_id = _optional_string(data, "deliveryId")
+        if delivery_id is not None and (not delivery_id.strip() or len(delivery_id) > 512):
+            raise TrpcError("Superset response field deliveryId was not a bounded non-empty string")
         submit_sent = _required_bool(data, "submitSent")
         duplicate = _required_bool(data, "duplicate")
         revision_before = _required_nonnegative_int(data, "revisionBefore")
@@ -509,9 +547,11 @@ class SupersetAdapter:
         submitted_text: str,
     ) -> None:
         _validate_canary(canary)
-        if _structured_canary_observed(submitted_text, canary):
+        # Deliberately the loose matcher: the guard must reject everything the
+        # observation path could ever accept, under any wrapping.
+        if _canary_could_appear(submitted_text, canary):
             raise ValueError("canary must not occur literally in submitted text")
-        if _structured_canary_observed(baseline_text, canary):
+        if _canary_could_appear(baseline_text, canary):
             raise ValueError("canary was already present in baseline")
 
     def await_canary(
@@ -574,6 +614,8 @@ class SupersetAdapter:
                     kind="canary.observed",
                     provenance=Provenance.TERMINAL_DIFF,
                     evidence_ref=f"terminal:{snapshot.terminal_id}:revision:{snapshot.revision}",
+                    source_id="adapter:superset",
+                    target_id=f"terminal:{snapshot.terminal_id}",
                 )
                 return CanaryResult(True, attempts, last_revision, evidence)
             now = clock()
@@ -589,13 +631,37 @@ class SupersetAdapter:
             provenance=Provenance.TERMINAL_DIFF,
             reason="canary_timeout",
             evidence_ref=f"terminal:{self.config.terminal_id}:revision:{last_revision}",
+            source_id="adapter:superset",
+            target_id=f"terminal:{self.config.terminal_id}",
         )
         return CanaryResult(False, attempts, last_revision, evidence)
 
 
+def _wrap_tolerant_pattern(canary: str) -> str:
+    """Match the canary even when a hard line wrap splits it mid-token."""
+    return r"\s*".join(re.escape(character) for character in canary)
+
+
+def _canary_could_appear(text: str, canary: str) -> bool:
+    """Loosest possible match, used only to REJECT text before dispatch.
+
+    This must stay strictly looser than `_structured_canary_observed`. The
+    boundary assertions there are whitespace-sensitive, so a terminal wrap can
+    manufacture a boundary that the submitted text did not have: text
+    `X<canary>` carries no boundary before the canary, but the pane renders it
+    as `X\\n<canary>`, which does. If the pre-dispatch guard were the stricter
+    of the two, that echo would satisfy acceptance on its own — a false GREEN
+    from prompt echo, which is the one outcome this project must never produce.
+
+    Dropping the boundary assertions here means the guard rejects anything that
+    could later be observed, in any wrapping.
+    """
+    return re.search(_wrap_tolerant_pattern(canary), strip_terminal_decoration(text)) is not None
+
+
 def _structured_canary_observed(terminal_text: str, canary: str) -> bool:
-    normalized = normalize_terminal_text(terminal_text)
-    pattern = rf"(?<![A-Z0-9_]){re.escape(canary)}(?![A-Z0-9_])"
+    normalized = strip_terminal_decoration(terminal_text)
+    pattern = rf"(?<![A-Z0-9_]){_wrap_tolerant_pattern(canary)}(?![A-Z0-9_])"
     return re.search(pattern, normalized) is not None
 
 
@@ -608,8 +674,8 @@ def _is_uuid(value: str) -> bool:
 
 
 def _validate_canary(canary: str) -> None:
-    if not isinstance(canary, str) or re.fullmatch(r"RELAYPROOF_ACK_[A-F0-9]{32}", canary) is None:
-        raise ValueError("canary must be RELAYPROOF_ACK_ followed by 32 uppercase hex characters")
+    if not isinstance(canary, str) or re.fullmatch(r"YAPITALISM_ACK_[A-F0-9]{32}", canary) is None:
+        raise ValueError("canary must be YAPITALISM_ACK_ followed by 32 uppercase hex characters")
 
 
 def _required_response_string(payload: dict[str, Any], key: str) -> str:

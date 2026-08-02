@@ -2,7 +2,7 @@
 
 ## Boundary model
 
-RelayProof observes five independent command legs:
+Yapitalism observes five independent command legs:
 
 ```text
 capture → dispatch → accept → work → deliver
@@ -15,8 +15,10 @@ The legs have separate lifetimes. Audio-session health is a parallel channel obs
 - `model.py`: immutable evidence events and deterministic status projection.
 - `canary.py`: ANSI/line-wrap tolerant canary matching.
 - `ledger.py`: append-only local evidence ledger with restrictive permissions.
-- `cli.py`: human-readable doctor output over scrubbed fixtures.
-- future `adapters/`: Superset MCP, replay, and approved notification surfaces.
+- `claims.py`: owner-only, expiring, single-use confirmation claims bound to exact dispatch content.
+- `cli.py`: doctor output, persisted receipt projection, and explicit Superset operations.
+- `adapters/superset/`: fail-closed local Superset tRPC integration.
+- future adapters: replay and explicitly approved notification surfaces.
 
 ## Evidence provenance
 
@@ -29,6 +31,14 @@ Every event declares one of:
 - `inferred`: reasoned conclusion without direct proof.
 
 Inference can explain a verdict but cannot independently satisfy a required leg.
+
+## Authority and projections
+
+The verified JSONL event ledger is the sole local authority. CLI summaries, manifests, search indexes, and future databases are read-only rebuildable projections. Dual writable authority is forbidden.
+
+Ledger sequence controls ordering. Wall-clock timestamps are provenance only. Explicit supersession can remove stale evidence from projection without deleting append-only history.
+
+The event envelope separates actor, source, target, session, command, and delivery identity. These fields support attribution and correlation; they never prove a leg or change receipt color.
 
 ## Status projection
 

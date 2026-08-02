@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1200" role="img" aria-labelledby="title desc">
+  <title id="title">Yapitalism — The Subscription Goblin</title>
+  <desc id="desc">An original green goblin in a black hoodie shouting into a microphone while coding terminals work behind him.</desc>
+  <defs>
+    <filter id="rough" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.025" numOctaves="3" seed="44" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="5"/>
+    </filter>
+    <filter id="paper">
+      <feTurbulence type="fractalNoise" baseFrequency="0.72" numOctaves="4" seed="12" result="grain"/>
+      <feColorMatrix in="grain" type="saturate" values="0" result="mono"/>
+      <feComponentTransfer in="mono"><feFuncA type="table" tableValues="0 .17"/></feComponentTransfer>
+    </filter>
+    <pattern id="dots" width="18" height="18" patternUnits="userSpaceOnUse">
+      <circle cx="3" cy="3" r="2.2" fill="#171812" opacity=".22"/>
+    </pattern>
+    <style>
+      .ink{stroke:#171812;stroke-width:18;stroke-linejoin:round;stroke-linecap:round}
+      .thin{stroke:#171812;stroke-width:10;stroke-linejoin:round;stroke-linecap:round}
+      .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:900;letter-spacing:.04em}
+      .sans{font-family:Impact,Haettenschweiler,'Arial Narrow Bold',sans-serif;font-weight:900;letter-spacing:-.025em}
+    </style>
+  </defs>
+  <rect width="1200" height="1200" fill="#f3e6c3"/>
+  <path d="M0 880L1200 615V1200H0Z" fill="#ff6534"/>
+  <rect width="1200" height="1200" fill="url(#dots)" opacity=".34"/>
+
+  <!-- terminal wall -->
+  <g transform="rotate(-2 600 600)" opacity=".95">
+    <rect x="585" y="225" width="530" height="455" rx="20" fill="#171812" class="thin"/>
+    <g fill="#c7ff2e">
+      <rect x="620" y="270" width="200" height="150" rx="8"/>
+      <rect x="845" y="270" width="230" height="150" rx="8"/>
+      <rect x="620" y="445" width="255" height="180" rx="8"/>
+      <rect x="900" y="445" width="175" height="180" rx="8"/>
+    </g>
+    <g stroke="#171812" stroke-width="10" stroke-linecap="round" opacity=".78">
+      <path d="M650 310h105m-105 34h72m-72 34h130M875 310h150m-150 34h95m-95 34h125M650 490h180m-180 38h105m-105 38h155m125-76h105m-105 38h76m-76 38h112"/>
+    </g>
+    <g fill="#ff6534" class="mono" font-size="32">
+      <text x="635" y="408">SHIP</text><text x="860" y="408">RUN</text><text x="635" y="612">PASS</text><text x="918" y="612">ACK</text>
+    </g>
+  </g>
+
+  <!-- goblin hoodie/body -->
+  <path d="M112 1060Q140 720 348 645Q560 620 675 786Q729 892 722 1090Z" fill="#171812" class="ink" filter="url(#rough)"/>
+  <path d="M170 1060Q194 826 339 736Q493 742 594 838Q631 900 646 1060Z" fill="#2b2c25" class="thin"/>
+  <path d="M220 757Q222 614 356 560Q507 555 579 700L530 826L282 822Z" fill="#171812" class="ink"/>
+
+  <!-- ears + head -->
+  <path d="M273 580L75 446L244 682Z" fill="#c7ff2e" class="ink"/>
+  <path d="M523 578L716 430L561 690Z" fill="#c7ff2e" class="ink"/>
+  <path d="M206 477Q261 325 408 337Q548 337 602 484Q634 614 545 730Q470 811 333 766Q201 726 178 592Q171 527 206 477Z" fill="#c7ff2e" class="ink" filter="url(#rough)"/>
+  <path d="M143 500L92 470L190 600" fill="none" class="thin" opacity=".7"/>
+  <path d="M644 482L694 449L568 609" fill="none" class="thin" opacity=".7"/>
+
+  <!-- face -->
+  <path d="M255 490Q313 447 360 498Q311 547 248 519Z" fill="#f3e6c3" class="thin"/>
+  <path d="M430 486Q497 444 548 501Q498 552 427 518Z" fill="#f3e6c3" class="thin"/>
+  <circle cx="315" cy="500" r="18" fill="#171812"/><circle cx="485" cy="501" r="18" fill="#171812"/>
+  <path d="M377 500L343 602L421 581" fill="#90b91a" class="thin"/>
+  <path d="M246 632Q390 721 542 620Q495 760 367 747Q282 735 246 632Z" fill="#171812" class="thin"/>
+  <path d="M285 646L319 710L350 660M445 668L477 714L500 646" fill="#f3e6c3" class="thin"/>
+  <path d="M278 408Q328 363 381 398M424 394Q483 360 526 411" fill="none" class="thin"/>
+
+  <!-- microphone -->
+  <g transform="rotate(-11 716 790)">
+    <rect x="680" y="620" width="122" height="232" rx="58" fill="#f3e6c3" class="ink"/>
+    <path d="M706 666h70M700 710h82M700 754h82" class="thin" fill="none"/>
+    <path d="M742 852V1014M666 1016H820" class="ink" fill="none"/>
+  </g>
+  <path d="M522 877Q619 784 690 816" fill="none" class="ink"/>
+  <circle cx="515" cy="880" r="54" fill="#c7ff2e" class="ink"/>
+
+  <!-- typography -->
+  <g transform="rotate(-2 520 100)">
+    <rect x="48" y="45" width="875" height="160" fill="#171812"/>
+    <text x="78" y="168" class="sans" font-size="136" fill="#f3e6c3">YAPITALISM</text>
+  </g>
+  <g transform="rotate(3 900 800)">
+    <path d="M789 732L1144 680L1116 866L776 899Z" fill="#c7ff2e" class="thin"/>
+    <text x="825" y="780" class="mono" font-size="34" fill="#171812">THE</text>
+    <text x="807" y="833" class="sans" font-size="52" fill="#171812">SUBSCRIPTION</text>
+    <text x="847" y="878" class="sans" font-size="54" fill="#171812">GOBLIN</text>
+  </g>
+  <rect x="54" y="1090" width="1092" height="72" fill="#171812"/>
+  <text x="600" y="1142" text-anchor="middle" class="mono" font-size="34" fill="#f3e6c3">ONE MIC. INFINITE INTERNS.</text>
+
+  <!-- print grain -->
+  <rect width="1200" height="1200" filter="url(#paper)" opacity=".44"/>
+</svg>
