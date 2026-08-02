@@ -320,3 +320,34 @@ h1 .hit{
 @media (max-width:640px){
   .closeIn h2{line-height:.96}
 }
+
+/* --- install: the site never said what this technically is ------------- */
+
+.install{border-top:3px solid var(--ink);background:var(--paper)}
+.installIn{padding-block:clamp(2.2rem,4.5vw,3.4rem);display:grid;gap:1.6rem}
+.installHead h2{
+	margin:0 0 .7rem;font-family:var(--poster);font-weight:400;text-transform:uppercase;
+	font-size:clamp(1.9rem,5vw,3.2rem);line-height:.9;letter-spacing:-.01em;
+}
+.installHead h2 em{font-style:normal;background:var(--acid);padding:0 .12em}
+.installHead p{margin:0;max-width:62ch;color:#4a4c40}
+.installCols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1.1rem}
+@media(max-width:820px){.installCols{grid-template-columns:minmax(0,1fr)}}
+/* align-content:start, or the shorter column's rows stretch to match the
+   taller one and its code block starts lower and grows for no reason. */
+.installCol{display:grid;gap:.6rem;min-width:0;align-content:start}
+.installStep{
+	font-family:var(--mono);font-size:.63rem;font-weight:700;letter-spacing:.09em;
+	text-transform:uppercase;color:#5d5f52;
+}
+.install pre{
+	margin:0;padding:.95rem 1rem;background:var(--ink);color:#f5f6ea;
+	border:3px solid var(--ink);box-shadow:var(--hard);
+	font-family:var(--mono);font-size:.72rem;line-height:1.65;
+	/* Long commands must scroll inside the block, never widen the page. */
+	overflow-x:auto;white-space:pre;
+}
+.install pre code{font:inherit}
+.installNote{font-family:var(--mono);font-size:.62rem;line-height:1.5;color:#5d5f52}
+.installIn > .btn{justify-self:start;width:auto}
+@media(max-width:410px){.install pre{font-size:.66rem;padding:.8rem .85rem}}

@@ -18,6 +18,7 @@ be split across two servers that disagree about what counts as proof.
 
 from __future__ import annotations
 
+import argparse
 import os
 import time
 
@@ -174,7 +175,31 @@ def await_acceptance_patiently(
     return AcceptanceOutcome(False, attempts, reason, changed_recently, ended - started)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    """Run the server over stdio or loopback HTTP.
+
+    Two transports because MCP clients are split on how they start a server.
+    Codex takes a URL (`codex mcp add --url`), so HTTP stays the default and an
+    existing registration keeps working. Claude Desktop, Cursor and most of the
+    directory listings instead spawn a process and speak over stdin/stdout, and
+    without that this server simply cannot be used from them at all.
+    """
+    parser = argparse.ArgumentParser(prog="yapitalism-mcp", description=__doc__)
+    parser.add_argument(
+        "--stdio",
+        action="store_true",
+        help="speak MCP over stdin/stdout instead of binding a port "
+        "(for clients that launch the server themselves)",
+    )
+    args = parser.parse_args(argv)
+
+    transport = os.environ.get("YAPITALISM_MCP_TRANSPORT", "")
+    if args.stdio or transport == "stdio":
+        # Nothing but protocol may reach stdout here: FastMCP's startup banner
+        # would be parsed as a message and break the session immediately.
+        mcp.run(transport="stdio", show_banner=False)
+        return
+
     host = os.environ.get("YAPITALISM_MCP_HOST", DEFAULT_HOST)
     port = int(os.environ.get("YAPITALISM_MCP_PORT", DEFAULT_PORT))
     if host not in {"127.0.0.1", "::1", "localhost"}:
