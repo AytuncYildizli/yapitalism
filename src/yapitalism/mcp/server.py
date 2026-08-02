@@ -56,6 +56,17 @@ def panes_list() -> dict[str, object]:
       - `missing_guarantees`, when present: protections that backend cannot
         enforce. Never describe such a pane as being as safe as one without it.
 
+    Naming a pane out loud: match on `project`, `folder` or `branch`, whichever
+    the person actually said. These disagree more often than you would expect —
+    project "yapitalism" sits in a folder called "relayproof", "Superset Watch
+    Voice" in "superset-watchos-voice-spike" — so accept either word for the
+    same pane. `label` carries a workspace name that is frequently meaningless
+    ("dasendeha", "elo", "b"); prefer `project` and `folder` when speaking, and
+    disambiguate with `runtime` when one project has several panes.
+
+    `path` is the full directory. It is there to tell two identically named
+    folders apart, not to be read aloud.
+
     `errors` lists backends that could not be reached. A backend returning no
     panes and a backend that failed are different claims — do not report "no
     terminals" while `errors` is non-empty.

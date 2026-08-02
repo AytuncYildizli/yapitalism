@@ -71,6 +71,16 @@ class BackendPane:
     #: meaningless without knowing which project it sits in.
     project: str = ""
     branch: str = ""
+    #: The directory the terminal is actually in, last segment only. Carried
+    #: separately from `project` because they disagree often enough to matter:
+    #: project "yapitalism" lives in a folder still called "relayproof",
+    #: "Superset Watch Voice" in "superset-watchos-voice-spike", "opty" in a
+    #: nested "opty/opty". Someone naming a terminal out loud may reach for
+    #: either word, so both have to be matchable.
+    folder: str = ""
+    #: Full path, for disambiguating two folders with the same last segment.
+    #: Too long to speak; meant for the model to reason over, not read aloud.
+    path: str = ""
 
 
 @runtime_checkable

@@ -175,3 +175,44 @@ class SupersetBackendTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FolderIdentityTests(unittest.TestCase):
+    """A pane has to be findable by whichever word the person said.
+
+    Workspace names in real use are things like "dasendeha", "elo" and "b".
+    Project and folder are what someone actually says out loud, and they
+    disagree often enough to matter: project "yapitalism" lives in a folder
+    still called "relayproof".
+    """
+
+    def _payload(self, **kw):
+        from yapitalism.mcp.registry import _pane_payload
+
+        pane = BackendPane(
+            target_id="superset:x", label="yapitalism/main", runtime="claude",
+            width=0, height=0, dead=False, **kw
+        )
+        return _pane_payload(pane, "superset", ())
+
+    def test_folder_and_project_are_both_reported_when_they_differ(self) -> None:
+        payload = self._payload(
+            project="yapitalism",
+            folder="relayproof",
+            path="/Users/x/.superset/projects/relayproof",
+        )
+        self.assertEqual(payload["project"], "yapitalism")
+        self.assertEqual(payload["folder"], "relayproof")
+        self.assertEqual(payload["path"], "/Users/x/.superset/projects/relayproof")
+
+    def test_absent_fields_are_omitted_rather_than_sent_empty(self) -> None:
+        payload = self._payload(project="solo")
+        for key in ("folder", "path", "branch"):
+            self.assertNotIn(key, payload)
+
+    def test_the_full_path_survives_for_disambiguation(self) -> None:
+        """Two projects can end in the same folder name."""
+        a = self._payload(project="opty", folder="opty", path="/Users/x/opty/opty")
+        b = self._payload(project="other", folder="opty", path="/Users/x/other/opty")
+        self.assertEqual(a["folder"], b["folder"])
+        self.assertNotEqual(a["path"], b["path"])
