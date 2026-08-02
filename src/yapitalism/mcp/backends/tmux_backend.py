@@ -90,6 +90,8 @@ class TmuxBackend:
                 height=pane.height,
                 dead=pane.dead,
                 detail=pane.current_command,
+                folder=pane.current_path.rstrip("/").rsplit("/", 1)[-1],
+                path=pane.current_path,
             )
             for pane in panes
         ]

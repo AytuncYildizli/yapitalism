@@ -114,6 +114,8 @@ class SupersetBackend:
             name = str(workspace.get("name") or workspace_id[:8])
             project = str(workspace.get("projectName") or "")
             branch = str(workspace.get("branch") or "")
+            worktree = str(workspace.get("worktreePath") or "")
+            folder = worktree.rstrip("/").rsplit("/", 1)[-1] if worktree else ""
             for session in sessions:
                 terminal_id = session.get("terminalId")
                 if not isinstance(terminal_id, str) or not terminal_id:
@@ -133,6 +135,8 @@ class SupersetBackend:
                         detail=state,
                         project=project,
                         branch=branch,
+                        folder=folder,
+                        path=worktree,
                     )
                 )
         return panes

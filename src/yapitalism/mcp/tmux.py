@@ -24,6 +24,7 @@ _PANE_FIELDS = (
     "#{pane_width}",
     "#{pane_height}",
     "#{pane_dead}",
+    "#{pane_current_path}",
 )
 
 _SHELLS = frozenset({"sh", "bash", "zsh", "fish", "dash", "ksh", "tcsh", "csh"})
@@ -50,6 +51,7 @@ class TmuxPane:
     height: int
     dead: bool
     runtime: str
+    current_path: str = ""
 
 
 def _socket_args() -> list[str]:
@@ -165,6 +167,7 @@ def list_panes() -> list[TmuxPane]:
                 height=int(fields[7]),
                 dead=fields[8] == "1",
                 runtime=classify_tree(processes, pane_pid),
+                current_path=fields[9],
             )
         )
     return panes

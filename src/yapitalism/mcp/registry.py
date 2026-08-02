@@ -82,6 +82,10 @@ def _pane_payload(
         payload["project"] = pane.project
     if pane.branch:
         payload["branch"] = pane.branch
+    if pane.folder:
+        payload["folder"] = pane.folder
+    if pane.path:
+        payload["path"] = pane.path
     if degraded:
         # Surfaced per pane, not buried in a capabilities call the model may
         # never make.
