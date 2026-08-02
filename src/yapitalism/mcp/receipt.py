@@ -112,12 +112,31 @@ def build_receipt(
             missing_guarantees=degraded,
         )
 
+    if acceptance.agent_active:
+        # Still YELLOW: output is not acceptance. But "gave up on a working
+        # agent" and "wrote into a silent pane" call for different next moves,
+        # and someone who cannot see the screen has no other way to tell.
+        return Receipt(
+            status="YELLOW",
+            phase=send.phase,
+            accepted=False,
+            reason=acceptance.reason or "canary_timeout_agent_active",
+            speak=(
+                "SARI: Ajan hâlâ çalışıyor ama bitirdiğine dair kanıt gelmedi; "
+                f"{int(acceptance.waited_seconds)} saniye bekledim."
+            ),
+            missing_guarantees=degraded,
+        )
+
     return Receipt(
         status="YELLOW",
         phase=send.phase,
         accepted=False,
         reason=acceptance.reason or "canary_timeout",
-        speak="SARI: Gönderdim, ajanın işlediğine dair kanıt gelmedi.",
+        speak=(
+            "SARI: Gönderdim, terminalde hiç hareket olmadı ve ajanın "
+            "işlediğine dair kanıt gelmedi."
+        ),
         missing_guarantees=degraded,
     )
 

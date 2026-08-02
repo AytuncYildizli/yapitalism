@@ -19,6 +19,7 @@ be split across two servers that disagree about what counts as proof.
 from __future__ import annotations
 
 import os
+import time
 
 from uuid import uuid4
 
@@ -87,6 +88,79 @@ def pane_read(target_id: str, lines: int = 200) -> dict[str, object]:
     return {"ok": True, "target_id": target_id, "text": text}
 
 
+#: How long a pane may sit unchanged before the wait is abandoned.
+IDLE_TIMEOUT_SECONDS = 8.0
+#: Absolute ceiling, however busy the agent looks.
+MAX_WAIT_SECONDS = 180.0
+
+
+def await_acceptance_patiently(
+    backend: object,
+    target_id: str,
+    canary: str | None,
+    *,
+    idle_timeout: float = IDLE_TIMEOUT_SECONDS,
+    max_wait: float = MAX_WAIT_SECONDS,
+) -> AcceptanceOutcome:
+    """Wait for proof for as long as the agent looks alive.
+
+    A fixed deadline reports on the clock, not on the agent: an agent that
+    thinks for thirty seconds and then answers correctly was verified all
+    along, and calling that YELLOW is a false negative that trains an operator
+    to ignore YELLOW. So the deadline resets whenever the pane changes, bounded
+    by `max_wait` so a chatty pane cannot hold the turn open forever.
+
+    Pane movement is used ONLY to decide whether to keep waiting. It is never
+    evidence of acceptance — that remains the canary alone. This is the
+    distinction ADR-0002 exists for, and widening the window must not widen
+    what counts as proof.
+    """
+    if canary is None:
+        return AcceptanceOutcome(False, 0, "no_canary")
+
+    started = time.monotonic()
+    attempts = 0
+    previous: str | None = None
+    changed_last_slice = False
+    idle_deadline = started + idle_timeout
+    hard_deadline = started + max_wait
+
+    while True:
+        now = time.monotonic()
+        remaining = min(idle_deadline, hard_deadline) - now
+        if remaining <= 0:
+            break
+        outcome = backend.await_acceptance(
+            target_id, canary, timeout=min(remaining, 2.0)
+        )
+        attempts += outcome.attempts
+        if outcome.observed:
+            return AcceptanceOutcome(
+                True, attempts, "", False, time.monotonic() - started
+            )
+
+        try:
+            current = backend.read_pane(target_id, 1000)
+        except BackendError:
+            # Losing the ability to look is not proof of anything either way;
+            # stop waiting and report honestly below.
+            break
+        changed_last_slice = previous is not None and current != previous
+        if changed_last_slice:
+            idle_deadline = time.monotonic() + idle_timeout
+        previous = current
+        # A backend whose await returns immediately would otherwise spin this
+        # loop at full speed for the whole ceiling. Negligible against a real
+        # two-second slice.
+        time.sleep(0.05)
+
+    waited = time.monotonic() - started
+    reason = (
+        "canary_timeout_agent_active" if changed_last_slice else "canary_timeout_idle"
+    )
+    return AcceptanceOutcome(False, attempts, reason, changed_last_slice, waited)
+
+
 def main() -> None:
     host = os.environ.get("YAPITALISM_MCP_HOST", DEFAULT_HOST)
     port = int(os.environ.get("YAPITALISM_MCP_PORT", DEFAULT_PORT))
@@ -124,6 +198,16 @@ def pane_send(
     agent echoes back. Turn it off only when the marker itself would corrupt the
     command — and then the result can never be better than YELLOW.
 
+    `timeout_seconds` is an IDLE timeout, not a total one. The wait restarts
+    whenever the pane changes, up to a hard ceiling, so an agent that thinks for
+    a minute and then answers is still verified. Pane movement only decides
+    whether to keep waiting; it never counts as acceptance.
+
+    A YELLOW therefore carries which kind it is. `canary_timeout_agent_active`
+    means the agent was still working when the wait ended — say that, and offer
+    to check again. `canary_timeout_idle` means nothing moved at all, which is
+    the one that usually means the text never landed anywhere useful.
+
     Speak the returned `speak` value verbatim or more conservatively.
     """
     try:
@@ -138,7 +222,9 @@ def pane_send(
             target_id, payload, canary=canary, client_token=str(uuid4())
         )
         acceptance = (
-            backend.await_acceptance(target_id, canary, timeout=timeout_seconds)
+            await_acceptance_patiently(
+                backend, target_id, canary, idle_timeout=timeout_seconds
+            )
             if outcome.dispatched
             else AcceptanceOutcome(False, 0, "not_dispatched")
         )

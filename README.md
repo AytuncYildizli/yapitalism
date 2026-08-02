@@ -44,6 +44,24 @@ that up to "done" costs you hours before you notice.
 Explicitly **not** acceptance: an HTTP 2xx, a PTY write returning, terminal output changing, a
 revision advancing, or the prompt echoing your own words back.
 
+### Waiting is not the same as failing
+
+A fixed deadline reports on the clock, not on the agent. An agent that thinks for a minute and
+then answers correctly was verified all along, and calling that YELLOW teaches an operator to
+ignore YELLOW. So the wait is an **idle** timeout: it restarts whenever the pane changes, bounded
+by a hard ceiling.
+
+Pane movement decides only whether to keep waiting. It is never evidence of acceptance — that
+stays the canary alone. A YELLOW therefore says which kind it is:
+
+- `canary_timeout_agent_active` — still working when the wait ended. Check again.
+- `canary_timeout_idle` — nothing moved at all. This is the one that usually means the text
+  never landed anywhere useful.
+
+What remains irreducible: if an agent silently ignores the text and prints nothing, no mechanism
+here can distinguish that from an agent that never received it. Verification needs the agent to
+emit something.
+
 ### Backends do not prove the same things
 
 Every receipt carries the guarantees its backend could not enforce:

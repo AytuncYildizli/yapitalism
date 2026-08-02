@@ -162,8 +162,18 @@ class AcceptanceOutcome:
     `observed=False` with `reason="no_canary"` means acceptance was never
     testable — not that it failed. Those are different verdicts and must not
     collapse into one.
+
+    `agent_active` separates the two ways a wait can end without proof. A pane
+    that was still producing output when the clock ran out has not failed; the
+    clock did. A pane that sat silent is the case worth worrying about. Both
+    stay YELLOW — output is not acceptance — but they are different things to
+    say to someone who cannot see the screen.
     """
 
     observed: bool
     attempts: int
     reason: str = ""
+    #: The pane was still changing when the wait was abandoned.
+    agent_active: bool = False
+    #: How long acceptance was actually waited for.
+    waited_seconds: float = 0.0
