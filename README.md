@@ -1,3 +1,8 @@
+<!-- mcp-name: io.github.AytuncYildizli/yapitalism -->
+<!-- The MCP Registry verifies PyPI package ownership by finding this
+     string in the package description, which is this README. It must
+     match server.json's name exactly. -->
+
 # Yapitalism
 
 **Drive terminal coding agents by voice, and never let the answer claim more than it proved.**
