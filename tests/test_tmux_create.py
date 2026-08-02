@@ -241,3 +241,67 @@ class RealSessionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BlockingPromptTests(unittest.TestCase):
+    """A confirmed runtime is not a ready agent.
+
+    Found on the first real end-to-end run: claude parked on its trust-folder
+    dialog reported runtime_confirmed, swallowed the instruction sent to it, and
+    the send came back an honest YELLOW whose cause was invisible.
+    """
+
+    def test_recognises_the_trust_dialog_seen_live(self) -> None:
+        from yapitalism.mcp.backends.tmux_backend import detect_blocking_prompt
+
+        # Verbatim from the pane in that run.
+        pane = (
+            "Claude Code'll be able to read, edit, and execute files here.\n"
+            "Security guide\n"
+            "> 1. Yes, I trust this folder\n"
+            "  2. No, exit\n"
+            "Enter to confirm . Esc to cancel"
+        )
+        self.assertEqual(detect_blocking_prompt(pane), "trust_prompt")
+
+    def test_recognises_auth_and_confirm_prompts(self) -> None:
+        from yapitalism.mcp.backends.tmux_backend import detect_blocking_prompt
+
+        self.assertEqual(detect_blocking_prompt("Sign in to continue"), "auth_prompt")
+        self.assertEqual(
+            detect_blocking_prompt("Press Enter to continue"), "confirm_prompt"
+        )
+
+    def test_an_ordinary_prompt_is_not_flagged(self) -> None:
+        from yapitalism.mcp.backends.tmux_backend import detect_blocking_prompt
+
+        self.assertEqual(
+            detect_blocking_prompt('> Try "fix typecheck errors"\nmanual mode on'), ""
+        )
+
+    def test_no_match_means_unrecognised_not_ready(self) -> None:
+        """The claim this must never make.
+
+        Empty is the absence of a recognised block, not evidence of readiness.
+        An unknown blocking dialog returns "" too, so nothing downstream may
+        read "" as a green light.
+        """
+        from yapitalism.mcp.backends.tmux_backend import detect_blocking_prompt
+
+        unknown_block = "?? Awaiting license acceptance [1] accept [2] quit"
+        self.assertEqual(detect_blocking_prompt(unknown_block), "")
+
+    def test_blocked_on_is_only_serialised_when_something_was_seen(self) -> None:
+        clear = CreateOutcome(
+            target_id="tmux:%1", created=True, runtime_requested="claude",
+            runtime_observed="claude", session_name="s", cwd="/tmp",
+        )
+        self.assertNotIn("blocked_on", clear.as_dict())
+        blocked = CreateOutcome(
+            target_id="tmux:%1", created=True, runtime_requested="claude",
+            runtime_observed="claude", session_name="s", cwd="/tmp",
+            blocked_on="trust_prompt",
+        )
+        self.assertEqual(blocked.as_dict()["blocked_on"], "trust_prompt")
+        # Still confirmed: it IS running. Readiness is the separate question.
+        self.assertTrue(blocked.runtime_confirmed)

@@ -175,3 +175,43 @@ class SpokenDifferenceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BlockingPromptRefusalTests(unittest.TestCase):
+    """Refusing to type into a dialog.
+
+    Not only a receipt concern. A blocking prompt is usually a menu, so text
+    plus Enter can select one of its options — on the first live run the pane
+    was on "1. Yes, I trust this folder / 2. No, exit".
+    """
+
+    def _receipt(self, phase: str):
+        return build_receipt(
+            SendOutcome(phase=phase, dispatched=False, runtime="claude", reason="x"),
+            AcceptanceOutcome(False, 0, "not_dispatched"),
+            CAPABILITIES,
+        )
+
+    def test_a_refused_send_is_red_and_says_nothing_was_written(self) -> None:
+        receipt = self._receipt("rejected_trust_prompt")
+        self.assertEqual(receipt.status, "RED")
+        self.assertFalse(receipt.accepted)
+        self.assertIn("hiçbir şey yazmadım", receipt.speak)
+
+    def test_each_blocking_kind_gets_its_own_wording(self) -> None:
+        trust = self._receipt("rejected_trust_prompt").speak
+        auth = self._receipt("rejected_auth_prompt").speak
+        self.assertNotEqual(trust, auth)
+        self.assertIn("güven", trust)
+        self.assertIn("giriş", auth)
+
+    def test_refusal_never_reads_as_delivered(self) -> None:
+        for phase in (
+            "rejected_trust_prompt",
+            "rejected_auth_prompt",
+            "rejected_confirm_prompt",
+        ):
+            with self.subTest(phase=phase):
+                receipt = self._receipt(phase)
+                self.assertEqual(receipt.status, "RED")
+                self.assertFalse(receipt.accepted)

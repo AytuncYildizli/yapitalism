@@ -137,13 +137,20 @@ class CreateOutcome:
     session_name: str
     cwd: str
     reason: str = ""
+    #: A known blocking prompt was seen in the pane, e.g. "trust_prompt". Empty
+    #: means none was RECOGNISED, which is not the same as "the agent is ready"
+    #: — this is pattern matching against states we have seen before, never
+    #: proof of readiness. The first live run found the gap: an agent parked on
+    #: a trust dialog reports runtime_confirmed and silently swallows the first
+    #: instruction sent to it.
+    blocked_on: str = ""
 
     @property
     def runtime_confirmed(self) -> bool:
         return self.created and self.runtime_observed == self.runtime_requested
 
     def as_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "target_id": self.target_id,
             "created": self.created,
             "runtime_requested": self.runtime_requested,
@@ -153,6 +160,9 @@ class CreateOutcome:
             "cwd": self.cwd,
             "reason": self.reason,
         }
+        if self.blocked_on:
+            payload["blocked_on"] = self.blocked_on
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
