@@ -75,16 +75,44 @@ Superset's host refuses a write unless the revision still matches, the client to
 the prompt is empty. `tmux send-keys` enforces none of that. Both can reach GREEN; they are not the
 same GREEN, and saying so is the difference between a receipt and a decoration.
 
-## Run it
+## Install
+
+Needs Python 3.11+ and `tmux`. Everything runs on your machine; nothing is exposed to the network.
 
 ```bash
-PYTHONPATH=src python3 -m yapitalism.mcp.server      # loopback only; refuses any other host
+# 1. install
+pipx install git+https://github.com/AytuncYildizli/yapitalism        # or: uv tool install / pip install
+
+# 2. start the server (loopback only — it refuses to bind anything else)
+yapitalism-mcp
+
+# 3. point your voice client's agent at it, in another shell
 codex mcp add yapitalism --url http://127.0.0.1:8792/mcp
 ```
 
-Then ask your voice client to list your panes. `.agents/launchd/` keeps the server alive across
-reboots; `.agents/skills/superset-operator/` holds the voice policy that teaches a model how to
-speak these receipts, with a drift check against the runtime copy.
+Then talk to the voice app: *"list my panes"*, then *"send this to the Codex pane"*.
+
+`YAPITALISM_MCP_PORT` moves the port if 8792 is taken. `YAPITALISM_TMUX_SOCKET` targets a
+non-default tmux server.
+
+### Keeping it running
+
+The voice route dies when the server does, so on macOS run it as a login agent —
+`.agents/launchd/` has the plist and a README. Kill any shell instance first, or the two fight
+over the port.
+
+### Superset terminals (optional)
+
+The tmux backend needs nothing. To also reach Superset-managed terminals, the backend reads a
+`0600` manifest holding the host endpoint and token, from
+`~/.cache/superset-watch-voice/yapitalism-manifest.json` or `$YAPITALISM_SUPERSET_MANIFEST`.
+Without it `panes_list` still returns your tmux panes and reports Superset in `errors` — a
+backend that could not be reached is never silently reported as "no terminals".
+
+### Teaching the voice how to speak the receipts
+
+`.agents/skills/superset-operator/` holds the policy that stops a model rounding YELLOW up to
+"done", plus a drift check against the copy your agent actually loads.
 
 ## The receipt core, on its own
 

@@ -17,8 +17,20 @@ classifiers = [
   "Typing :: Typed",
 ]
 
+dependencies = [
+  # The MCP server is the product; without this an install imports and then
+  # dies at runtime, which is what shipping no dependencies at all did.
+  "fastmcp>=3.1,<4",
+]
+
+[project.urls]
+Homepage = "https://yapitalism.com"
+Source = "https://github.com/AytuncYildizli/yapitalism"
+
 [project.scripts]
 yapitalism = "yapitalism.cli:main"
+# The install has to give people the server, not just the receipt CLI.
+yapitalism-mcp = "yapitalism.mcp.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
