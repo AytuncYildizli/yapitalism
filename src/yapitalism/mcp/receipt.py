@@ -145,6 +145,15 @@ def build_receipt(
 
 
 def _speak_rejected(phase: str) -> str:
+    if phase == "rejected_trust_prompt":
+        return (
+            "Ajan bir güven onayı ekranında bekliyor; oraya yazmak menüden "
+            "rastgele bir seçenek seçebilirdi, hiçbir şey yazmadım."
+        )
+    if phase == "rejected_auth_prompt":
+        return "Ajan giriş ekranında bekliyor; hiçbir şey yazmadım."
+    if phase == "rejected_confirm_prompt":
+        return "Ajan bir onay bekliyor; hiçbir şey yazmadım."
     if phase == "rejected_prompt_not_empty":
         return "Prompt alanında bekleyen metin var; hiçbir şey yazmadım."
     if phase.startswith("duplicate_"):

@@ -31,6 +31,32 @@ from .base import (
     SendOutcome,
 )
 
+# Blocking states seen in real agent startups, matched against the pane after
+# the runtime is confirmed. This is recognition, not proof: a state absent from
+# this table reads as "nothing recognised", never as "ready". Named accordingly
+# so nobody downstream can mistake one for the other.
+_BLOCKING_PROMPTS: tuple[tuple[str, str], ...] = (
+    # Observed live: claude parks here on a directory it has not seen before,
+    # and swallows the first instruction sent to it.
+    ("trust this folder", "trust_prompt"),
+    ("do you trust", "trust_prompt"),
+    ("yes, i trust", "trust_prompt"),
+    ("sign in to", "auth_prompt"),
+    ("log in to", "auth_prompt"),
+    ("paste your api key", "auth_prompt"),
+    ("press enter to continue", "confirm_prompt"),
+)
+
+
+def detect_blocking_prompt(pane_text: str) -> str:
+    """Label a known blocking prompt, or "" when none is recognised."""
+    haystack = pane_text.lower()
+    for needle, label in _BLOCKING_PROMPTS:
+        if needle in haystack:
+            return label
+    return ""
+
+
 _CAPABILITIES = BackendCapabilities(
     idempotent_dispatch=False,
     optimistic_revision=False,
@@ -113,6 +139,13 @@ class TmuxBackend:
                 break
             time.sleep(min(0.3, max(0.0, deadline - time.monotonic())))
 
+        # A confirmed runtime is not a ready agent. Look for a blocking prompt
+        # before anyone sends work into what is actually a dialog box.
+        try:
+            blocked_on = detect_blocking_prompt(capture_pane(target_id, 60))
+        except TmuxError:
+            blocked_on = ""
+
         return CreateOutcome(
             target_id=target_id,
             created=True,
@@ -121,6 +154,7 @@ class TmuxBackend:
             session_name=session_name,
             cwd=cwd,
             reason="" if observed == runtime else "runtime_not_observed",
+            blocked_on=blocked_on,
         )
 
     def send(
@@ -140,6 +174,25 @@ class TmuxBackend:
         """
         try:
             before = capture_pane(target_id, 1000)
+
+            # Refuse rather than type into a dialog. This is not only a receipt
+            # concern: a blocking prompt is usually a menu, so text followed by
+            # Enter can SELECT one of its options. On the first live run the
+            # pane was sitting on "1. Yes, I trust this folder / 2. No, exit"
+            # and the send went straight into it.
+            #
+            # tmux cannot enforce an empty prompt, which is why
+            # empty_prompt_check is declared False - but declining a state we
+            # can positively recognise is strictly better than writing blind.
+            blocking = detect_blocking_prompt(before)
+            if blocking:
+                return SendOutcome(
+                    phase=f"rejected_{blocking}",
+                    dispatched=False,
+                    runtime=self._runtime_of(target_id),
+                    reason=blocking,
+                )
+
             revision_before = self._revisions.observe(target_id, before)
             if canary is not None:
                 if _canary_could_appear(before, canary):

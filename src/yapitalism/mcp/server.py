@@ -313,14 +313,23 @@ def panes_create(
     except BackendError as error:
         return {"ok": False, "error": str(error), "runtime": runtime, "cwd": cwd}
 
-    speak = (
-        f"{outcome.runtime_observed} calisiyor, pane {outcome.target_id}"
-        if outcome.runtime_confirmed
-        else (
+    if outcome.blocked_on:
+        # Confirmed running and still unable to take work. Found on the first
+        # live run: an agent parked on a trust dialog swallows the first
+        # instruction, and the send that follows returns an honest YELLOW whose
+        # cause is invisible unless this is said out loud.
+        speak = (
+            f"{runtime} basladi ama bir onay ekraninda bekliyor "
+            f"({outcome.blocked_on}); is gondermeden once orayi gecmek gerekiyor. "
+            f"Pane {outcome.target_id}"
+        )
+    elif outcome.runtime_confirmed:
+        speak = f"{outcome.runtime_observed} calisiyor, pane {outcome.target_id}"
+    else:
+        speak = (
             f"Oturum acildi ama {runtime} calistigi dogrulanamadi; "
             f"pane {outcome.target_id} bos olabilir"
         )
-    )
     return {"ok": True, "speak": speak, **outcome.as_dict()}
 
 
