@@ -8,7 +8,7 @@ const BETA_HREF = "https://github.com/AytuncYildizli/yapitalism";
 
 // Kept in sync with the README's install section by hand. If these drift, the
 // site teaches people a command that does not work.
-const INSTALL_CMD = `pipx install git+https://github.com/AytuncYildizli/yapitalism
+const INSTALL_CMD = `pipx install yapitalism
 yapitalism-mcp
 
 codex mcp add yapitalism --url http://127.0.0.1:8792/mcp`;
