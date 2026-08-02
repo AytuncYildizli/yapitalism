@@ -6,8 +6,20 @@ every pane tool.
 
 ## Install
 
-    cp .agents/launchd/com.yapitalism.mcp.plist ~/Library/LaunchAgents/
+The plist is a template: launchd does not search `PATH` and does not expand
+`~`, so the binary and log paths have to be absolute. This fills them in from
+wherever your install actually put the entry point, instead of trusting a
+guess:
+
+    sed -e "s|__YAPITALISM_MCP_BIN__|$(command -v yapitalism-mcp)|" \
+        -e "s|__HOME__|$HOME|g" \
+        .agents/launchd/com.yapitalism.mcp.plist \
+        > ~/Library/LaunchAgents/com.yapitalism.mcp.plist
+
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.yapitalism.mcp.plist
+
+If `command -v yapitalism-mcp` prints nothing, the package is not installed on
+this `PATH` yet — see the README at the repository root.
 
 ## Check
 

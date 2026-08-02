@@ -99,9 +99,16 @@ non-default tmux server.
 
 ### Keeping it running
 
-The voice route dies when the server does, so on macOS run it as a login agent —
-`.agents/launchd/` has the plist and a README. Kill any shell instance first, or the two fight
-over the port.
+The voice route dies when the server does, so run it under your init system rather than a
+terminal. Both units run as **your user**, never root: the server can read every terminal you
+can see.
+
+- **macOS** — `.agents/launchd/`. The plist is a template; its README has a `sed` line that
+  fills in the real binary path, because launchd searches neither `PATH` nor `~`.
+- **Linux** — `.agents/systemd/`, a `--user` unit. `systemctl --user enable --now yapitalism-mcp`.
+
+Kill any shell instance first either way, or the two race for port 8792 and which one wins is
+down to timing.
 
 ### Superset terminals (optional)
 

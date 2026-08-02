@@ -1,25 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template. launchd does not search PATH and does not expand ~, so the binary
+  and log paths must be absolute; they are placeholders. The README beside this
+  file has a one-liner that fills them in from `command -v yapitalism-mcp`,
+  which beats editing by hand.
+
+  This runs the INSTALLED entry point. The previous version of this file pointed
+  at one specific checkout with PYTHONPATH set at a hard-coded /Users path, so
+  it could only ever have worked on the machine it was written on.
+-->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.yapitalism.mcp</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/homebrew/bin/python3</string>
-    <string>-m</string>
-    <string>yapitalism.mcp.server</string>
+    <string>__YAPITALISM_MCP_BIN__</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PYTHONPATH</key><string>/Users/aytuncyildizli/.superset/projects/relayproof/src</string>
     <key>YAPITALISM_MCP_HOST</key><string>127.0.0.1</string>
     <key>YAPITALISM_MCP_PORT</key><string>8792</string>
   </dict>
-  <key>WorkingDirectory</key><string>/Users/aytuncyildizli/.superset/projects/relayproof</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/Users/aytuncyildizli/Library/Logs/yapitalism-mcp.log</string>
-  <key>StandardErrorPath</key><string>/Users/aytuncyildizli/Library/Logs/yapitalism-mcp.log</string>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/yapitalism-mcp.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/yapitalism-mcp.log</string>
   <key>ProcessType</key><string>Background</string>
 </dict>
 </plist>
