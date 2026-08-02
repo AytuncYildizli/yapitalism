@@ -97,6 +97,29 @@ Then talk to the voice app: *"list my panes"*, then *"send this to the Codex pan
 `YAPITALISM_MCP_PORT` moves the port if 8792 is taken. `YAPITALISM_TMUX_SOCKET` targets a
 non-default tmux server.
 
+### Clients that launch the server themselves
+
+Codex takes a URL. Claude Desktop, Cursor and most other MCP clients instead spawn the process
+and speak over stdin/stdout, so point them at `--stdio` and do not run a separate server:
+
+```json
+{
+  "mcpServers": {
+    "yapitalism": {
+      "command": "yapitalism-mcp",
+      "args": ["--stdio"]
+    }
+  }
+}
+```
+
+Use the absolute path from `command -v yapitalism-mcp` if the client does not inherit your
+`PATH` — GUI apps on macOS usually do not. `YAPITALISM_MCP_TRANSPORT=stdio` does the same as the
+flag, for clients that only let you set the environment.
+
+In stdio mode nothing but protocol may reach stdout, so the server suppresses its own startup
+banner. If you wrap it in a shell script, keep that script silent too.
+
 ### Keeping it running
 
 The voice route dies when the server does, so run it under your init system rather than a
