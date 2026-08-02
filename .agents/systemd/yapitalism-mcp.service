@@ -1,0 +1,22 @@
+[Unit]
+Description=Yapitalism MCP server (loopback only)
+Documentation=https://github.com/AytuncYildizli/yapitalism
+After=network.target
+
+[Service]
+# A user unit, not a system one: the server reads every terminal this user can
+# see, so it must never run as root or as a different account.
+Type=simple
+ExecStart=%h/.local/bin/yapitalism-mcp
+Environment=YAPITALISM_MCP_HOST=127.0.0.1
+Environment=YAPITALISM_MCP_PORT=8792
+Restart=on-failure
+RestartSec=3
+
+# The port is the whole interface, so refuse to start a second copy rather than
+# let two instances fight over it.
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+[Install]
+WantedBy=default.target
