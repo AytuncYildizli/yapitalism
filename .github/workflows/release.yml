@@ -1,0 +1,73 @@
+name: Release
+
+# Publishing is deliberately tag-driven and manual-dispatchable, never on push
+# to main: a merge should not be able to burn a version number. PyPI refuses a
+# re-upload of a version that already exists, so an accidental publish is not
+# something you can take back.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install the package as a user would
+        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+      - name: Lint
+        run: ruff check src tests
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --disable-pip-version-check build
+      - run: python -m build
+      - name: Refuse to publish a .dev version by accident
+        # pyproject carries a .dev suffix during development. Shipping that to
+        # PyPI as a release is a mistake you cannot undo, so fail loudly here.
+        run: |
+          version=$(ls dist/*.tar.gz | sed -E 's/.*yapitalism-(.+)\.tar\.gz/\1/')
+          echo "built version: $version"
+          case "$version" in
+            *dev*) echo "::error::refusing to release a .dev version ($version)"; exit 1 ;;
+          esac
+      - name: Check the artifacts are well formed
+        run: |
+          python -m pip install --disable-pip-version-check twine
+          python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Matches the Environment name registered with PyPI's trusted publisher.
+    environment: pypi
+    permissions:
+      # The whole point of trusted publishing: GitHub mints a short-lived OIDC
+      # token for this job and PyPI verifies it. There is no API token stored
+      # anywhere, so there is none to leak or rotate.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
