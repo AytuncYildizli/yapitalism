@@ -163,17 +163,19 @@ class AcceptanceOutcome:
     testable — not that it failed. Those are different verdicts and must not
     collapse into one.
 
-    `agent_active` separates the two ways a wait can end without proof. A pane
-    that was still producing output when the clock ran out has not failed; the
-    clock did. A pane that sat silent is the case worth worrying about. Both
-    stay YELLOW — output is not acceptance — but they are different things to
-    say to someone who cannot see the screen.
+    `pane_changed_recently` is deliberately named after what was measured and
+    not after what one might wish it meant. It says the pane's text moved, which
+    a spinner, a clock, a log tail or a second agent sharing the pane all
+    produce without the intended agent doing anything. It must never be spoken
+    as "the agent is working"; it is a hint about whether looking again is worth
+    it, nothing more.
     """
 
     observed: bool
     attempts: int
     reason: str = ""
-    #: The pane was still changing when the wait was abandoned.
-    agent_active: bool = False
+    #: The pane's text changed within the last idle window. NOT evidence that
+    #: the intended agent is doing anything.
+    pane_changed_recently: bool = False
     #: How long acceptance was actually waited for.
     waited_seconds: float = 0.0

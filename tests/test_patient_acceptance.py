@@ -68,7 +68,7 @@ class PatientWaitTests(unittest.TestCase):
             backend, "tmux:%1", "YAPITALISM_ACK_X", idle_timeout=5.0, max_wait=30.0
         )
         self.assertTrue(outcome.observed)
-        self.assertFalse(outcome.agent_active)
+        self.assertFalse(outcome.pane_changed_recently)
         self.assertEqual(outcome.reason, "")
 
     def test_a_silent_pane_still_gives_up(self) -> None:
@@ -78,8 +78,8 @@ class PatientWaitTests(unittest.TestCase):
             backend, "tmux:%1", "YAPITALISM_ACK_X", idle_timeout=0.4, max_wait=5.0
         )
         self.assertFalse(outcome.observed)
-        self.assertFalse(outcome.agent_active)
-        self.assertEqual(outcome.reason, "canary_timeout_idle")
+        self.assertFalse(outcome.pane_changed_recently)
+        self.assertEqual(outcome.reason, "canary_timeout_pane_still")
 
     def test_the_hard_ceiling_bounds_a_pane_that_never_stops_moving(self) -> None:
         # A pane that changes forever must not hold the turn open forever.
@@ -89,7 +89,7 @@ class PatientWaitTests(unittest.TestCase):
         )
         self.assertFalse(outcome.observed)
         self.assertLess(outcome.waited_seconds, 4.0)
-        self.assertEqual(outcome.reason, "canary_timeout_agent_active")
+        self.assertEqual(outcome.reason, "canary_timeout_pane_moving")
 
     def test_movement_alone_is_never_acceptance(self) -> None:
         """The guarantee widening the window must not break.
@@ -102,7 +102,7 @@ class PatientWaitTests(unittest.TestCase):
             backend, "tmux:%1", "YAPITALISM_ACK_X", idle_timeout=5.0, max_wait=1.0
         )
         self.assertFalse(outcome.observed)
-        self.assertTrue(outcome.agent_active)
+        self.assertTrue(outcome.pane_changed_recently)
         receipt = build_receipt(
             SendOutcome(phase="injected", dispatched=True, runtime="codex"),
             outcome,
@@ -144,27 +144,29 @@ class SpokenDifferenceTests(unittest.TestCase):
             CAPABILITIES,
         )
 
-    def test_a_working_agent_is_reported_as_still_working(self) -> None:
+    def test_pane_movement_is_reported_as_pane_movement_not_as_the_agent(self) -> None:
         receipt = self._receipt(
             AcceptanceOutcome(
-                False, 3, "canary_timeout_agent_active", True, 42.0
+                False, 3, "canary_timeout_pane_moving", True, 42.0
             )
         )
         self.assertEqual(receipt.status, "YELLOW")
-        self.assertIn("çalışıyor", receipt.speak)
+        self.assertIn("Terminalde hareket", receipt.speak)
+        # It must NOT claim the agent is working - a spinner moves the pane.
+        self.assertNotIn("Ajan hâlâ çalışıyor", receipt.speak)
         self.assertIn("42", receipt.speak)
 
     def test_a_silent_pane_is_reported_as_no_movement(self) -> None:
         receipt = self._receipt(
-            AcceptanceOutcome(False, 3, "canary_timeout_idle", False, 8.0)
+            AcceptanceOutcome(False, 3, "canary_timeout_pane_still", False, 8.0)
         )
         self.assertEqual(receipt.status, "YELLOW")
         self.assertIn("hareket", receipt.speak)
 
     def test_neither_is_ever_spoken_as_done(self) -> None:
         for acceptance in (
-            AcceptanceOutcome(False, 1, "canary_timeout_agent_active", True, 9.0),
-            AcceptanceOutcome(False, 1, "canary_timeout_idle", False, 9.0),
+            AcceptanceOutcome(False, 1, "canary_timeout_pane_moving", True, 9.0),
+            AcceptanceOutcome(False, 1, "canary_timeout_pane_still", False, 9.0),
         ):
             receipt = self._receipt(acceptance)
             self.assertEqual(receipt.status, "YELLOW")

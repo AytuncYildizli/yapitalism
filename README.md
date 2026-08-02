@@ -54,9 +54,11 @@ by a hard ceiling.
 Pane movement decides only whether to keep waiting. It is never evidence of acceptance — that
 stays the canary alone. A YELLOW therefore says which kind it is:
 
-- `canary_timeout_agent_active` — still working when the wait ended. Check again.
-- `canary_timeout_idle` — nothing moved at all. This is the one that usually means the text
-  never landed anywhere useful.
+- `canary_timeout_pane_moving` — the pane's text was still changing. Named after what was
+  measured: a spinner, a clock, a log tail or a second agent sharing the pane all produce this
+  without the intended agent doing anything. It is a hint that looking again may be worth it,
+  never a claim that the agent is working.
+- `canary_timeout_pane_still` — nothing moved at all.
 
 What remains irreducible: if an agent silently ignores the text and prints nothing, no mechanism
 here can distinguish that from an agent that never received it. Verification needs the agent to

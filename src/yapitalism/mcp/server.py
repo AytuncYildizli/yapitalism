@@ -90,8 +90,11 @@ def pane_read(target_id: str, lines: int = 200) -> dict[str, object]:
 
 #: How long a pane may sit unchanged before the wait is abandoned.
 IDLE_TIMEOUT_SECONDS = 8.0
-#: Absolute ceiling, however busy the agent looks.
-MAX_WAIT_SECONDS = 180.0
+#: Absolute ceiling. Deliberately short: this runs inside a synchronous voice
+#: turn, and three minutes of dead air is a dead conversation. A pane that keeps
+#: moving without ever emitting the canary should return an honest YELLOW
+#: quickly so the operator can decide, not hold the turn open hoping.
+MAX_WAIT_SECONDS = 30.0
 
 
 def await_acceptance_patiently(
@@ -120,7 +123,7 @@ def await_acceptance_patiently(
 
     started = time.monotonic()
     attempts = 0
-    changed_last_slice = False
+    last_change_at: float | None = None
     # Baseline BEFORE the first slice. Reading only afterwards meant the first
     # comparison needed a second slice, so any idle_timeout shorter than two
     # slices could never detect movement at all and always reported idle.
@@ -151,20 +154,24 @@ def await_acceptance_patiently(
             # Losing the ability to look is not proof of anything either way;
             # stop waiting and report honestly below.
             break
-        changed_last_slice = previous is not None and current != previous
-        if changed_last_slice:
-            idle_deadline = time.monotonic() + idle_timeout
+        if previous is not None and current != previous:
+            last_change_at = time.monotonic()
+            idle_deadline = last_change_at + idle_timeout
         previous = current
         # A backend whose await returns immediately would otherwise spin this
         # loop at full speed for the whole ceiling. Negligible against a real
         # two-second slice.
         time.sleep(0.05)
 
-    waited = time.monotonic() - started
-    reason = (
-        "canary_timeout_agent_active" if changed_last_slice else "canary_timeout_idle"
+    ended = time.monotonic()
+    # "Recently" means inside the idle window, not merely "on the last poll".
+    changed_recently = (
+        last_change_at is not None and (ended - last_change_at) < idle_timeout
     )
-    return AcceptanceOutcome(False, attempts, reason, changed_last_slice, waited)
+    reason = (
+        "canary_timeout_pane_moving" if changed_recently else "canary_timeout_pane_still"
+    )
+    return AcceptanceOutcome(False, attempts, reason, changed_recently, ended - started)
 
 
 def main() -> None:
@@ -209,10 +216,11 @@ def pane_send(
     a minute and then answers is still verified. Pane movement only decides
     whether to keep waiting; it never counts as acceptance.
 
-    A YELLOW therefore carries which kind it is. `canary_timeout_agent_active`
-    means the agent was still working when the wait ended — say that, and offer
-    to check again. `canary_timeout_idle` means nothing moved at all, which is
-    the one that usually means the text never landed anywhere useful.
+    A YELLOW carries which kind it is, described by what was measured:
+    `canary_timeout_pane_moving` means the pane's text was still changing —
+    which a spinner, a clock or a second agent also produce, so say "there is
+    movement", never "the agent is working", and offer to look again.
+    `canary_timeout_pane_still` means nothing moved at all.
 
     Speak the returned `speak` value verbatim or more conservatively.
     """

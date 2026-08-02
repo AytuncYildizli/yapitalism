@@ -112,18 +112,21 @@ def build_receipt(
             missing_guarantees=degraded,
         )
 
-    if acceptance.agent_active:
-        # Still YELLOW: output is not acceptance. But "gave up on a working
-        # agent" and "wrote into a silent pane" call for different next moves,
-        # and someone who cannot see the screen has no other way to tell.
+    if acceptance.pane_changed_recently:
+        # Still YELLOW, and the wording is deliberately about the PANE, not the
+        # agent. A spinner, a clock, a log tail or a second agent sharing the
+        # pane all move the text without the intended agent doing anything, so
+        # "the agent is still working" would be a claim the evidence cannot
+        # carry — the same class of overclaim as speaking YELLOW as GREEN.
         return Receipt(
             status="YELLOW",
             phase=send.phase,
             accepted=False,
-            reason=acceptance.reason or "canary_timeout_agent_active",
+            reason=acceptance.reason or "canary_timeout_pane_moving",
             speak=(
-                "SARI: Ajan hâlâ çalışıyor ama bitirdiğine dair kanıt gelmedi; "
-                f"{int(acceptance.waited_seconds)} saniye bekledim."
+                "SARI: Terminalde hareket var ama ajanın işlediğine dair kanıt "
+                f"gelmedi; {int(acceptance.waited_seconds)} saniye bekledim. "
+                "Tekrar bakmamı ister misin?"
             ),
             missing_guarantees=degraded,
         )
