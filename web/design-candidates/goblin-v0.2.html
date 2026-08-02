@@ -1,111 +1,13 @@
-/* Yapitalism brand surface — goblin v0.2.
-   Ported from design-candidates/goblin-v0.2.html. Global rather than a CSS
-   module because it is a complete document style: reset, :root tokens and
-   element selectors, which scoping would break.
-
-   Fonts are self-hosted. The prototype pulled Anton/Archivo/Martian Mono from
-   fonts.googleapis.com, which this site's CSP (default-src 'self') blocks
-   outright - the page would have silently fallen back to Impact and system
-   sans, losing the entire typographic identity. Latin and latin-ext subsets
-   only. */
-
-@font-face {
-  font-family: 'Anton';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('/fonts/anton-400-latin-ext.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-}
-@font-face {
-  font-family: 'Anton';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('/fonts/anton-400-latin.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: 'Archivo';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('/fonts/archivo-400-latin-ext.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-}
-@font-face {
-  font-family: 'Archivo';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('/fonts/archivo-400-latin.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: 'Archivo';
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url('/fonts/archivo-600-latin-ext.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-}
-@font-face {
-  font-family: 'Archivo';
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url('/fonts/archivo-600-latin.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: 'Archivo';
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url('/fonts/archivo-700-latin-ext.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-}
-@font-face {
-  font-family: 'Archivo';
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url('/fonts/archivo-700-latin.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: 'Martian Mono';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('/fonts/martian-mono-400-latin-ext.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-}
-@font-face {
-  font-family: 'Martian Mono';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('/fonts/martian-mono-400-latin.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: 'Martian Mono';
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url('/fonts/martian-mono-700-latin-ext.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-}
-@font-face {
-  font-family: 'Martian Mono';
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url('/fonts/martian-mono-700-latin.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yapitalism — one mic, infinite interns</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo:wght@400;600;700&family=Martian+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
 /* ── tokens: straight off the brand board, not reinvented ─────────────── */
 :root{
   --paper:#f3eedb;
@@ -207,7 +109,7 @@ h1 .hit{
 
 /* ── goblin mode: the signature. one switch, the whole page changes job ── */
 .mode{border-top:3px solid var(--ink);border-bottom:3px solid var(--ink);background:var(--blue)}
-.modeIn{padding-block:clamp(1.8rem,4vw,3rem)}
+.modeIn{padding:clamp(1.8rem,4vw,3rem) 0}
 .modeHead{display:flex;align-items:flex-end;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.5rem}
 .modeHead h2{
   margin:0;font-family:var(--poster);font-weight:400;text-transform:uppercase;
@@ -290,7 +192,7 @@ h1 .hit{
 
 /* ── close ────────────────────────────────────────────────────────────── */
 .close{border-top:3px solid var(--ink);background:var(--ink);color:var(--paper)}
-.closeIn{padding-block:clamp(2rem,4vw,3rem);display:grid;gap:1.4rem}
+.closeIn{padding:clamp(2rem,4vw,3rem) 0;display:grid;gap:1.4rem}
 .closeIn h2{
   margin:0;font-family:var(--poster);font-weight:400;text-transform:uppercase;
   font-size:clamp(2rem,6.5vw,4rem);line-height:.88;letter-spacing:-.01em;
@@ -303,20 +205,121 @@ h1 .hit{
 @media (prefers-reduced-motion:reduce){
   *{animation-duration:.01ms !important;transition-duration:.01ms !important}
 }
+</style>
+</head>
+<body data-goblin="off">
 
-/* --- fixes on top of the prototype ------------------------------------- */
+<div class="bar">
+  <span class="mark"><i>YAP</i>ITALISM</span>
+  <span class="push">turn yapping into shipping</span>
+  <span class="tag">local concept · v0.2</span>
+</div>
 
-/* .beats stacks at 820px but keeps gap:0, so each h3's acid highlight box -
-   tight at line-height .92 - collided with the paragraph above it. Give the
-   stacked column real separation and move the rule to the top edge. */
-@media (max-width:820px){
-  .beats{gap:1.6rem}
-  .beat{padding:1.4rem 0 0;border-left:0;border-top:3px solid var(--ink)}
-  .beat:first-child{padding-top:0;border-top:0}
-}
+<div class="wrap">
+  <section class="hero">
+    <div>
+      <p class="eyebrow">voice-operated agent capitalism</p>
+      <h1>Turn <span class="hit">yapping</span><br>into shipping.</h1>
+      <p class="sub">Talk to the voice app you already use. Yapitalism turns the
+        conversation into a control surface for <mark>one agent, a crew, or the whole
+        fleet</mark>.</p>
+      <p class="spec">one mic / multiple agents / verified delivery / zero new voice app</p>
+      <div class="acts">
+        <a class="btn" href="#">Take the mic →</a>
+        <a class="btn alt" href="#mode">See the voice loop ↓</a>
+      </div>
+    </div>
+    <div class="card">
+      <img src="../goblin.svg" alt="The Subscription Goblin shouting into a microphone while coding terminals run behind him">
+      <div class="burst">We have API at home</div>
+    </div>
+  </section>
+</div>
 
-/* Anton's caps are tall enough that line-height .88 makes the two lines of the
-   closing headline touch on narrow screens. */
-@media (max-width:640px){
-  .closeIn h2{line-height:.96}
-}
+<section class="mode" id="mode">
+  <div class="wrap modeIn">
+    <div class="modeHead">
+      <h2>How many agents do you<br>want on the mic?</h2>
+      <div class="switch">
+        <span class="state" id="stateLabel">Talk about it</span>
+        <button type="button" id="toggle" aria-pressed="false" aria-label="Goblin Mode">
+          <span class="knob"></span>
+        </button>
+        <span>goblin mode</span>
+      </div>
+    </div>
+
+    <p class="entered">The Subscription Goblin has entered the terminal.</p>
+
+    <div class="crew">
+      <div class="intern">
+        <div class="who"><span>Codex</span><em>working</em></div>
+        <p>“Fix checkout.”</p>
+        <div class="log">branch <b>fix/checkout-session</b><br>auth tests <b>12/12</b></div>
+      </div>
+      <div class="intern">
+        <div class="who"><span>Claude</span><em>reviewing</em></div>
+        <p>“Review the diff.”</p>
+        <div class="log">branch <b>review/482</b><br>flagged <b>retry path</b></div>
+      </div>
+      <div class="intern">
+        <div class="who"><span>Kimi</span><em>mapping</em></div>
+        <p>“Map the migration.”</p>
+        <div class="log">branch <b>map/schema-v3</b><br>indexed <b>14 tables</b></div>
+      </div>
+    </div>
+
+    <div class="receipt">
+      <div>yap received.</div>
+      <div>intern dispatched. ×3</div>
+      <div>receipt or it didn't happen.</div>
+      <div>keep talking. they're working.</div>
+    </div>
+  </div>
+</section>
+
+<div class="wrap">
+  <section class="beats">
+    <div class="beat">
+      <h3><span>Yap</span></h3>
+      <p>Use the voice surface already sitting inside your subscription. No new client
+        pretending to be the product.</p>
+    </div>
+    <div class="beat">
+      <h3><span>Command</span></h3>
+      <p>Name Codex, Claude, Kimi, one live terminal, several sessions, or the host you
+        mean. Yapitalism resolves it.</p>
+    </div>
+    <div class="beat">
+      <h3><span>Keep talking</span></h3>
+      <p>Send follow-ups and inspect state while they run. Risky actions still hold
+        until you answer.</p>
+    </div>
+  </section>
+</div>
+
+<section class="close">
+  <div class="wrap closeIn">
+    <h2>Your subscription<br>is now <em>management</em>.</h2>
+    <p class="legal">
+      Not affiliated with or endorsed by OpenAI. “API at Home” is campaign
+      language, not an official API claim. Third-party product names are used descriptively.
+      Blocked is a valid result. Fake green isn't.
+    </p>
+  </div>
+</section>
+
+<script>
+// Goblin Mode is the product's own metaphor for single-agent versus fleet, so the
+// switch is the page's one interactive idea: it changes what the page is showing,
+// not just how it looks.
+const body = document.body, btn = document.getElementById('toggle'), label = document.getElementById('stateLabel');
+btn.addEventListener('click', () => {
+  const on = body.dataset.goblin !== 'on';
+  body.dataset.goblin = on ? 'on' : 'off';
+  btn.setAttribute('aria-pressed', String(on));
+  label.textContent = on ? 'Ship it' : 'Talk about it';
+});
+</script>
+</body>
+</html>

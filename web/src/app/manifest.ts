@@ -18,9 +18,9 @@ export default function manifest(): MetadataRoute.Manifest {
 		description: "Control live coding-agent sessions from GPT or Codex Voice.",
 		start_url: "/",
 		display: "standalone",
-		// Matched to --ink, the brand surface background.
-		background_color: "#10110e",
-		theme_color: "#10110e",
+		// Matched to --paper, the brand surface background.
+		background_color: "#f3eedb",
+		theme_color: "#f3eedb",
 		icons: [
 			{
 				src: "/icon.svg",

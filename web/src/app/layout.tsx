@@ -11,12 +11,12 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
 	width: "device-width",
 	initialScale: 1,
-	// The brand surface is dark in every system theme; there is no
+	// The brand surface is paper in every system theme; there is no
 	// prefers-color-scheme rule in its CSS.
-	colorScheme: "dark",
-	// Tints the mobile browser's address bar. Matched to --ink, the page
+	colorScheme: "light",
+	// Tints the mobile browser's address bar. Matched to --paper, the page
 	// background sitting directly beneath it.
-	themeColor: "#10110e",
+	themeColor: "#f3eedb",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
