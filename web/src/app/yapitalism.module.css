@@ -624,3 +624,131 @@
 		transition: none;
 	}
 }
+
+/* Brand chrome — header, wordmark and footer.
+   Ported from the Superset fork's marketing route, which the standalone
+   extraction dropped along with the "Superset runs the backend" disclosure
+   line the footer carries. */
+
+.brandHeader {
+	position: sticky;
+	top: 0;
+	z-index: 30;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	min-height: 4.5rem;
+	padding: 0 clamp(1.25rem, 4.5vw, 4.5rem);
+	border-bottom: 1px solid var(--edge);
+	background: rgb(244 239 230 / 92%);
+	backdrop-filter: blur(18px);
+}
+
+.wordmark {
+	display: inline-flex;
+	gap: 0.7rem;
+	align-items: center;
+	color: var(--ink);
+	font-family: var(--font-pixel), sans-serif;
+	font-size: 1.08rem;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+}
+
+.wordmarkMark {
+	display: grid;
+	place-items: center;
+	width: 2rem;
+	height: 2rem;
+	border-radius: 0.42rem;
+	background: var(--ink);
+	color: var(--accent);
+	font-family: var(--font-ibm-plex-mono), monospace;
+	font-size: 0.84rem;
+	font-weight: 500;
+}
+
+.brandNav,
+.brandFooter nav {
+	display: flex;
+	gap: clamp(1rem, 2.5vw, 2rem);
+	align-items: center;
+}
+
+.brandNav > a:not(.navAction),
+.brandFooter nav a {
+	color: var(--ink-soft);
+	font-size: 0.82rem;
+	font-weight: 500;
+	transition: color 160ms ease;
+}
+
+.brandNav > a:not(.navAction):hover,
+.brandFooter nav a:hover {
+	color: var(--ink);
+}
+
+.navAction {
+	display: inline-flex;
+	gap: 0.45rem;
+	align-items: center;
+	justify-content: center;
+	min-height: 2.6rem;
+	padding: 0 1rem;
+	border-radius: 999px;
+	background: var(--ink);
+	color: var(--paper);
+	font-size: 0.8rem;
+	font-weight: 500;
+	transition:
+		transform 160ms ease,
+		background-color 160ms ease;
+}
+
+.navAction:hover {
+	transform: translateY(-1px);
+	background: #30332c;
+}
+
+.wordmark:focus-visible,
+.brandNav a:focus-visible,
+.brandFooter a:focus-visible {
+	outline: 2px solid var(--ink);
+	outline-offset: 3px;
+}
+
+.brandFooter {
+	display: flex;
+	gap: 3rem;
+	align-items: flex-end;
+	justify-content: space-between;
+	max-width: 1500px;
+	margin: 0 auto;
+	padding: clamp(2.5rem, 5vw, 4.5rem) clamp(1.25rem, 4.5vw, 4.5rem);
+	border-top: 1px solid var(--edge);
+}
+
+.brandFooter > div {
+	display: grid;
+	gap: 1rem;
+}
+
+.brandFooter p {
+	margin: 0;
+	color: var(--ink-soft);
+	font-size: 0.78rem;
+}
+
+@media (max-width: 760px) {
+	.brandHeader {
+		min-height: 4rem;
+	}
+
+	.brandNav > a:not(.navAction) {
+		display: none;
+	}
+
+	.navAction {
+		min-height: 2.75rem;
+	}
+}
