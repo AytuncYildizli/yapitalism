@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.AytuncYildizli/yapitalism",
   "title": "Yapitalism",
-  "description": "Drive terminal coding agents by voice. Lists and reads tmux and Superset panes, sends instructions into them, and returns a receipt that never claims more than it proved: GREEN only when the agent echoes a one-time marker, YELLOW when the write landed but processing was not proven.",
+  "description": "Drive terminal coding agents by voice, with receipts that never claim more than they proved.",
   "version": "0.1.1",
   "websiteUrl": "https://yapitalism.com",
   "repository": {
@@ -14,7 +14,9 @@
       "registryType": "pypi",
       "identifier": "yapitalism",
       "version": "0.1.1",
-      "transport": { "type": "stdio" },
+      "transport": {
+        "type": "stdio"
+      },
       "runtimeHint": "uvx",
       "packageArguments": [
         {
