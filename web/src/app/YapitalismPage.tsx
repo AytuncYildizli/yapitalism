@@ -6,6 +6,22 @@ import { useState } from "react";
 // Superset marketing app's /contact route does not exist here.
 const BETA_HREF = "https://github.com/AytuncYildizli/yapitalism";
 
+// Kept in sync with the README's install section by hand. If these drift, the
+// site teaches people a command that does not work.
+const INSTALL_CMD = `pipx install git+https://github.com/AytuncYildizli/yapitalism
+yapitalism-mcp
+
+codex mcp add yapitalism --url http://127.0.0.1:8792/mcp`;
+
+const STDIO_CONFIG = `{
+  "mcpServers": {
+    "yapitalism": {
+      "command": "yapitalism-mcp",
+      "args": ["--stdio"]
+    }
+  }
+}`;
+
 const CREW = [
 	{
 		who: "Codex",
@@ -187,6 +203,46 @@ export function YapitalismPage() {
 					))}
 				</section>
 			</div>
+
+			<section className="install" id="install">
+				<div className="wrap installIn">
+					<div className="installHead">
+						<h2>
+							It&apos;s a local <em>MCP server</em>.
+						</h2>
+						<p>
+							Your voice client already speaks MCP. This runs on your machine, binds
+							loopback only, and refuses any other host. No account, no relay, no
+							terminal contents leaving the box.
+						</p>
+					</div>
+
+					<div className="installCols">
+						<div className="installCol">
+							<span className="installStep">01 · install and run</span>
+							<pre>
+								<code>{INSTALL_CMD}</code>
+							</pre>
+						</div>
+						<div className="installCol">
+							<span className="installStep">
+								02 · or let the client launch it
+							</span>
+							<pre>
+								<code>{STDIO_CONFIG}</code>
+							</pre>
+							<span className="installNote">
+								Claude Desktop, Cursor and the like spawn the server themselves
+								over stdio.
+							</span>
+						</div>
+					</div>
+
+					<a className="btn alt" href={BETA_HREF} rel="noreferrer" target="_blank">
+						Source and docs →
+					</a>
+				</div>
+			</section>
 
 			<section className="close">
 				<div className="wrap closeIn">
