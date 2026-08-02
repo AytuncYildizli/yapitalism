@@ -183,9 +183,8 @@ docs/architecture.md      component boundaries and evidence model
 
 ## Credits
 
-The receipt-integrity design came from contributed pull requests that landed through rework, so
-the git history does not name everyone whose work is in the code. See
-[CONTRIBUTORS.md](CONTRIBUTORS.md).
+The receipt-integrity core was written by [@liri-ha](https://github.com/liri-ha), whose commits
+are carried here unrewritten. See [CONTRIBUTORS.md](CONTRIBUTORS.md).
 
 ## Security
 
