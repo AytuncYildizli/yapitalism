@@ -71,3 +71,38 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  registry:
+    # The MCP Registry stores metadata only and verifies that the PyPI package
+    # is really ours, so it can only run once the package is actually on PyPI.
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      # Same OIDC mechanism as PyPI: mcp-publisher exchanges a short-lived
+      # GitHub token for the io.github.AytuncYildizli/* namespace. No secret.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_amd64.tar.gz" \
+            | tar -xz mcp-publisher
+          ./mcp-publisher --help >/dev/null
+      - name: Wait for PyPI to serve the new version
+        # Ownership is verified by reading the package description off PyPI, so
+        # publishing here before the index has caught up fails for a reason
+        # that looks like a permissions problem and is not.
+        run: |
+          version=$(python -c "import json;print(json.load(open('server.json'))['version'])")
+          for i in $(seq 1 30); do
+            if curl -sf "https://pypi.org/pypi/yapitalism/$version/json" >/dev/null; then
+              echo "pypi has $version"; exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::pypi did not serve $version in time"; exit 1
+      - name: Publish to the MCP Registry
+        run: |
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
