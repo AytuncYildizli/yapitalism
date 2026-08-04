@@ -60,29 +60,78 @@ blocking prompt is gone. `prompt_empty` is `None`, always.
 **The proof that clearing worked is the next send returning GREEN.** Clearing is
 a step, not a claim. Callers clear, then send, and speak the send's receipt.
 
-## Not decided: Superset
+## Superset: the capability is already exposed
 
 `pane_clear` does not support Superset panes, and the two panes that actually
-blocked were both Superset. Its host exposes `workspace.list`,
-`terminal.listSessions`, `terminal.snapshot` and `terminal.send` — and
-`terminal.send` takes only text, revision, token and a confirm flag. Probing for
-`clearPrompt`, `setPrompt`, `sendKeys`, `interrupt` and `cancel` returned
-NOT_FOUND for all five.
+blocked were both Superset. Two earlier versions of this section explained why
+that was hard to fix. Both were wrong, in the same way, twice.
 
-So the host can *detect* a non-empty prompt but cannot *empty* one, and there is
-no client-side way around that. Reaching those PTYs outside the host API would
-mean bypassing the very check that makes Superset the safer backend, which is
-not a trade worth making.
+The first said the host "has no procedure" for emptying a prompt. That came from
+probing `127.0.0.1:48900` for `clearPrompt`, `setPrompt`, `sendKeys`, `interrupt`
+and `cancel` — five names invented by the person writing the probe.
 
-Unblocking Superset needs one upstream procedure. The minimum useful shape:
+The second said the host-service exposed "exactly four procedures" and that a new
+guarded one would have to be added. That came from probing twelve more names,
+including `write`. Also invented. `write` is what the PTY daemon's socket calls
+it (`src/main/terminal-host/index.ts`) and what the app's internal tRPC router
+calls it — so the name looked researched. It was still a guess about a third
+surface.
 
-    terminal.clearPrompt({ terminalId, expectedRevision, clientToken })
-      -> { phase, revisionBefore, revisionAfter, promptEmptyAfter }
+The actual router is `packages/host-service/src/trpc/router/terminal/terminal.ts`,
+a separate package rather than anything under `apps/desktop/src`, which is why
+every source search for it came back empty. It has fifteen procedures. One of
+them is:
 
-Guarded like `terminal.send` already is — revision-checked, token-deduplicated,
-and reporting whether the prompt is empty *afterwards*, which is the one fact
-the client cannot establish for itself. With that, `pane_send(when_ready=true)`
-becomes buildable for Superset and the dead end closes for both backends.
+```ts
+writeInput: protectedProcedure
+    .input(z.object({
+        terminalId: z.string(),
+        workspaceId: z.string(),
+        data: z.string(),
+    }))
+    .mutation(({ input }) => { ... })
+```
+
+Probed live: `terminal.writeInput` returns **401**, not 404 — the same status as
+`terminal.send`, which this project already calls successfully. The procedure
+exists, it is reachable, and the credentials are in hand.
+
+So Superset can clear a stuck prompt today. Sending `\x15` as `data` empties an
+occupied prompt; `\x1b` dismisses a menu. No host change, no upstream request.
+
+### But `writeInput` is unguarded, and that is the real design problem
+
+Note what the input schema does not contain: no `expectRevision`, no
+`clientToken`, no `requireEmptyPrompt`. `send` has all three (see its schema
+directly below `writeInput` in the same file). `writeInput` takes an arbitrary
+string and writes it to a PTY.
+
+That is the correct shape for the host — something has to be able to type — but
+it means the guarantees do not come free the way they do with `send`. A Superset
+`pane_clear` built on `writeInput` inherits none of them.
+
+The guard therefore has to live here, and it is the same closed-table discipline
+`CLEAR_ACTIONS` already uses for tmux: `data` is never caller-supplied, only a
+fixed control byte selected by name from a table in this repo.
+
+### Verification is no better than tmux's, and one guess here was also wrong
+
+An earlier draft of this section claimed a Superset `pane_clear` could return
+`prompt_empty: true` honestly, because `snapshot` would report whether the prompt
+was empty. It does not. `terminal.snapshot` returns `terminalId`, `text`,
+`revision`, `cols`, `rows` — nothing else. The host's prompt detector
+(`detectTerminalPromptStatus`) runs inside `send`, and speaks only through its
+response.
+
+So `prompt_empty` is `None` on both backends, and the proof of clearing remains
+the next `send` with `requireEmptyPrompt` not being refused.
+
+`pane_changed` is also weaker here than it looks. Measured live: Escape into an
+idle Codex pane whose prompt was already empty still moved the revision
+89209293 -> 89209557, because the status line ticks by itself. A running TUI is
+never byte-still, so on Superset this field is close to always True. Its absence
+would be informative; its presence is not, and it is documented that way in the
+backend rather than left to read as signal.
 
 ## Consequence
 

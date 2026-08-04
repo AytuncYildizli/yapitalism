@@ -40,6 +40,24 @@ _SEND_PHASES = {
     "rejected_prompt_unreadable",
 }
 _PROMPT_STATUSES = {"empty", "has_text", "unknown"}
+# The complete set of byte sequences this adapter will ever write to a terminal.
+#
+# `terminal.writeInput` takes `data: z.string()` — an arbitrary string, with no
+# expectRevision, no clientToken and no requireEmptyPrompt. Every guard that
+# makes `terminal.send` trustworthy is absent from it. So unlike `send`, where
+# the host refuses a bad write, the only thing standing between this procedure
+# and arbitrary typing is this table.
+#
+# Keys match tmux's CLEAR_ACTIONS deliberately: the operator says the same word
+# regardless of which backend owns the pane.
+#
+# Enter is absent and must stay absent, for the same reason as in tmux — Escape
+# cancels, Enter commits, and on a menu Enter picks whatever is highlighted.
+_CLEAR_SEQUENCES: dict[str, str] = {
+    "escape": "\x1b",
+    "clear-line": "\x15",  # C-u, readline "kill line"
+    "escape-twice": "\x1b\x1b",
+}
 _RUNTIMES = {"codex", "claude", "kimi", "shell", "unknown"}
 _AGENT_RUNTIMES = {"codex", "claude", "kimi"}
 
@@ -301,6 +319,26 @@ class DispatchResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ClearResult:
+    """What one unstick attempt actually did.
+
+    `prompt_empty` is deliberately always None. The host's prompt detector runs
+    inside `terminal.send`; `terminal.snapshot` returns only text, revision and
+    dimensions, so nothing here can establish emptiness without reimplementing
+    that detector against a screen dump — which would be guessing dressed as a
+    guarantee. The proof is the next `send` with requireEmptyPrompt not being
+    refused, and that response carries the host's own `promptStatus`.
+    """
+
+    terminal_id: str
+    action: str
+    revision_before: int
+    revision_after: int
+    text_changed: bool
+    prompt_empty: None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CanaryResult:
     observed: bool
     attempts: int
@@ -435,6 +473,45 @@ class SupersetAdapter:
             # as "no terminals" would report an empty workspace for a broken read.
             raise TrpcError("Superset terminal.listSessions omitted sessions")
         return [row for row in cast(list[Any], sessions) if isinstance(row, dict)]
+
+    def clear_prompt(self, action: str = "escape") -> ClearResult:
+        """Write one fixed control sequence to unstick a blocked prompt.
+
+        Uses `terminal.writeInput`, which the host exposes unguarded: no
+        expectRevision, no clientToken, no requireEmptyPrompt. That asymmetry
+        with `dispatch` is the whole reason `action` indexes a closed table
+        instead of naming bytes — a caller cannot reach `data` at all.
+
+        The absent revision guard is a real limitation, not a rounding error: a
+        change landing between the baseline read and the write is undetectable
+        here, where `dispatch` would have been refused by the host. Both
+        revisions are reported so the caller can at least see that something
+        moved, and callers must treat this as a step rather than a result.
+        """
+        sequence = _CLEAR_SEQUENCES.get(action)
+        if sequence is None:
+            known = ", ".join(sorted(_CLEAR_SEQUENCES))
+            raise ValueError(f"unknown clear action {action!r}; known: {known}")
+        before = self.snapshot(max_lines=_MAX_LINES)
+        self._transport.mutation(
+            "terminal.writeInput",
+            {
+                "terminalId": self.config.terminal_id,
+                "workspaceId": self.config.workspace_id,
+                "data": sequence,
+            },
+        )
+        # A TUI redraws asynchronously; reading immediately would compare against
+        # a screen that has not repainted yet and report no change.
+        time.sleep(0.4)
+        after = self.snapshot(max_lines=_MAX_LINES)
+        return ClearResult(
+            terminal_id=self.config.terminal_id,
+            action=action,
+            revision_before=before.revision,
+            revision_after=after.revision,
+            text_changed=after.text != before.text,
+        )
 
     def dispatch(
         self,
@@ -737,6 +814,7 @@ def _optional_nonnegative_int(payload: dict[str, Any], key: str) -> int | None:
 
 __all__ = [
     "CanaryResult",
+    "ClearResult",
     "DispatchResult",
     "SupersetAdapter",
     "SupersetConfig",

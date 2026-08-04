@@ -177,6 +177,46 @@ class SupersetBackend:
             raise BackendError(str(error)) from None
 
 
+    def clear_prompt(self, target_id: str, action: str = "escape") -> dict[str, object]:
+        """Unstick a blocked prompt through the host's `terminal.writeInput`.
+
+        Reports the same shape as the tmux backend so `pane_clear` stays one
+        tool. Two fields differ in meaning and the difference is real:
+
+        `pane_changed` here comes from the host's own revision counter rather
+        than a screen diff — and that makes it weaker evidence, not stronger.
+        Measured live: sending Escape to an idle Codex pane with an already-empty
+        prompt still moved the revision 89209293 -> 89209557, because the status
+        line ticks on its own. A running TUI is never byte-still, so on this
+        backend `pane_changed` is close to always True and must not be read as
+        "the clear did something". It is reported because its absence would be
+        informative; its presence is not.
+
+        `blocking_before` / `blocking_after` are empty strings rather than
+        labels. tmux earns those by pattern-matching a screen dump, which this
+        backend deliberately does not do — the host's prompt detector is the
+        authority, and it only speaks through `send`. Claiming a recognised
+        block here would be a weaker method wearing a stronger one's clothes.
+        """
+        adapter = self._adapter_for(target_id)
+        try:
+            result = adapter.clear_prompt(action)
+        except (TrpcError, ValueError) as error:
+            raise BackendError(str(error)) from None
+        return {
+            "action": result.action,
+            "keys_sent": [result.action],
+            "pane_changed": result.revision_after != result.revision_before
+            or result.text_changed,
+            "revision_before": result.revision_before,
+            "revision_after": result.revision_after,
+            "blocking_before": "",
+            "blocking_after": "",
+            "recognised_block_cleared": False,
+            # Never a claim of emptiness — see ClearResult's docstring.
+            "prompt_empty": None,
+        }
+
     def send(
         self,
         target_id: str,
