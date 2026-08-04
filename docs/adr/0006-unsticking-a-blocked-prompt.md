@@ -63,26 +63,51 @@ a step, not a claim. Callers clear, then send, and speak the send's receipt.
 ## Not decided: Superset
 
 `pane_clear` does not support Superset panes, and the two panes that actually
-blocked were both Superset. Its host exposes `workspace.list`,
-`terminal.listSessions`, `terminal.snapshot` and `terminal.send` — and
-`terminal.send` takes only text, revision, token and a confirm flag. Probing for
-`clearPrompt`, `setPrompt`, `sendKeys`, `interrupt` and `cancel` returned
-NOT_FOUND for all five.
+blocked were both Superset.
 
-So the host can *detect* a non-empty prompt but cannot *empty* one, and there is
-no client-side way around that. Reaching those PTYs outside the host API would
-mean bypassing the very check that makes Superset the safer backend, which is
-not a trade worth making.
+The first version of this section said the host "has no procedure" for emptying a
+prompt. That was measured badly. The probe asked for `clearPrompt`, `setPrompt`,
+`sendKeys`, `interrupt` and `cancel` — five names invented by the person writing
+the probe — and concluded a capability gap from five misses.
 
-Unblocking Superset needs one upstream procedure. The minimum useful shape:
+What is actually true is narrower and more useful.
+
+The host-service on `127.0.0.1:48900` is a local fork build
+(`hermes-workspace/research-intake/superset-voice-current-main`, running
+`dist/main/host-service.js`). Its HTTP surface exposes exactly four procedures:
+
+    terminal.send  terminal.snapshot  terminal.listSessions  workspace.list
+
+Twelve other names return NOT_FOUND, including `write`, `signal`, `resize`,
+`clearScrollback`, `getSession`, `detach` and `kill`.
+
+But the app's own tRPC router — `src/lib/trpc/routers/terminal/terminal.ts` —
+**does** have `write` (raw PTY bytes) and `signal`. So the capability exists one
+layer in. Sending `\x15` or `\x1b` through `terminal.write` would clear a prompt
+today.
+
+The host-service simply does not expose it, and that looks deliberate: four
+procedures, each guarded. The gap is a boundary decision, not a missing feature.
+
+### Which means exposing `terminal.write` would be the wrong fix
+
+A raw PTY write on the network surface hands any caller arbitrary bytes into a
+terminal, bypassing the revision check, the client-token dedup and the
+empty-prompt check that are the entire reason a Superset `GREEN` is worth more
+than a tmux one. It would trade the guarantee for the convenience.
+
+The narrow addition keeps both:
 
     terminal.clearPrompt({ terminalId, expectedRevision, clientToken })
       -> { phase, revisionBefore, revisionAfter, promptEmptyAfter }
 
-Guarded like `terminal.send` already is — revision-checked, token-deduplicated,
-and reporting whether the prompt is empty *afterwards*, which is the one fact
-the client cannot establish for itself. With that, `pane_send(when_ready=true)`
-becomes buildable for Superset and the dead end closes for both backends.
+Guarded exactly like `terminal.send` — revision-checked, token-deduplicated —
+writing only a fixed control sequence chosen by the host, never bytes supplied
+by the caller. `promptEmptyAfter` is the one fact a client cannot establish for
+itself, and the reason this belongs in the host rather than here.
+
+Since the host-service is a local checkout rather than an upstream dependency,
+this is a change within reach rather than a request to someone else.
 
 ## Consequence
 
