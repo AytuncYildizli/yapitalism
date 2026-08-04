@@ -112,10 +112,26 @@ it means the guarantees do not come free the way they do with `send`. A Superset
 
 The guard therefore has to live here, and it is the same closed-table discipline
 `CLEAR_ACTIONS` already uses for tmux: `data` is never caller-supplied, only a
-fixed control byte selected by name from a table in this repo. What changes
-versus tmux is the verification — `snapshot` afterwards can report whether the
-prompt is actually empty, so unlike the tmux path, a Superset `pane_clear` can
-honestly return `prompt_empty: true` instead of `None`.
+fixed control byte selected by name from a table in this repo.
+
+### Verification is no better than tmux's, and one guess here was also wrong
+
+An earlier draft of this section claimed a Superset `pane_clear` could return
+`prompt_empty: true` honestly, because `snapshot` would report whether the prompt
+was empty. It does not. `terminal.snapshot` returns `terminalId`, `text`,
+`revision`, `cols`, `rows` — nothing else. The host's prompt detector
+(`detectTerminalPromptStatus`) runs inside `send`, and speaks only through its
+response.
+
+So `prompt_empty` is `None` on both backends, and the proof of clearing remains
+the next `send` with `requireEmptyPrompt` not being refused.
+
+`pane_changed` is also weaker here than it looks. Measured live: Escape into an
+idle Codex pane whose prompt was already empty still moved the revision
+89209293 -> 89209557, because the status line ticks by itself. A running TUI is
+never byte-still, so on Superset this field is close to always True. Its absence
+would be informative; its presence is not, and it is documented that way in the
+backend rather than left to read as signal.
 
 ## Consequence
 

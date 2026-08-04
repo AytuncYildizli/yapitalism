@@ -72,8 +72,7 @@ def panes_list() -> dict[str, object]:
       - `running`        busy, still accepts work
       - `waiting_input`  a prompt or menu is waiting on a human. A send WILL be
         refused. Do not send: read the pane, tell the operator what it is
-        waiting for, and offer `pane_clear` on tmux or a trip to the machine on
-        Superset.
+        waiting for, and offer `pane_clear` — which now works on both backends.
 
     Checking this first is the difference between a refusal the operator has to
     decode and a sentence that tells them what to do.
@@ -372,16 +371,20 @@ def pane_clear(target_id: str, action: str = "escape") -> dict[str, object]:
     on a menu, Enter picks whatever is highlighted, which is how a stray
     keystroke runs an install command.
 
-    This does NOT report that the prompt is now empty, because tmux cannot
-    verify that. It reports what was sent, whether the pane changed, and whether
-    a blocking prompt that was recognisable before is gone now. **The proof that
-    clearing worked is the next `pane_send` returning GREEN** — so clear, then
-    send, and speak the send's receipt as the verdict. Never tell the operator
-    the prompt is clear on the strength of this call alone.
+    This does NOT report that the prompt is now empty, on either backend. tmux
+    cannot verify it at all, and Superset's prompt detector runs inside `send`
+    rather than `snapshot`, so neither can honestly answer the question here. It
+    reports what was sent and whether the pane changed. **The proof that clearing
+    worked is the next `pane_send` returning GREEN** — so clear, then send, and
+    speak the send's receipt as the verdict. Never tell the operator the prompt
+    is clear on the strength of this call alone.
 
-    Superset panes are not supported: its host exposes no procedure for
-    emptying a prompt, only for detecting that it is not empty. Clearing one
-    means doing it at the machine, or Superset's host gaining that capability.
+    Works on both backends, with an asymmetry worth knowing. On Superset the
+    write goes through `terminal.writeInput`, which — unlike `terminal.send` —
+    the host exposes with no revision check and no token dedup. So the strongest
+    backend has the weakest guarantee for exactly this one operation, and
+    `pane_changed` there is read from the host's revision counter rather than a
+    screen diff.
     """
     try:
         backend = registry.resolve(target_id)
