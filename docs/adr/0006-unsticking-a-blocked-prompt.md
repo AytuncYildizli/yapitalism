@@ -60,54 +60,62 @@ blocking prompt is gone. `prompt_empty` is `None`, always.
 **The proof that clearing worked is the next send returning GREEN.** Clearing is
 a step, not a claim. Callers clear, then send, and speak the send's receipt.
 
-## Not decided: Superset
+## Superset: the capability is already exposed
 
 `pane_clear` does not support Superset panes, and the two panes that actually
-blocked were both Superset.
+blocked were both Superset. Two earlier versions of this section explained why
+that was hard to fix. Both were wrong, in the same way, twice.
 
-The first version of this section said the host "has no procedure" for emptying a
-prompt. That was measured badly. The probe asked for `clearPrompt`, `setPrompt`,
-`sendKeys`, `interrupt` and `cancel` — five names invented by the person writing
-the probe — and concluded a capability gap from five misses.
+The first said the host "has no procedure" for emptying a prompt. That came from
+probing `127.0.0.1:48900` for `clearPrompt`, `setPrompt`, `sendKeys`, `interrupt`
+and `cancel` — five names invented by the person writing the probe.
 
-What is actually true is narrower and more useful.
+The second said the host-service exposed "exactly four procedures" and that a new
+guarded one would have to be added. That came from probing twelve more names,
+including `write`. Also invented. `write` is what the PTY daemon's socket calls
+it (`src/main/terminal-host/index.ts`) and what the app's internal tRPC router
+calls it — so the name looked researched. It was still a guess about a third
+surface.
 
-The host-service on `127.0.0.1:48900` is a local fork build
-(`hermes-workspace/research-intake/superset-voice-current-main`, running
-`dist/main/host-service.js`). Its HTTP surface exposes exactly four procedures:
+The actual router is `packages/host-service/src/trpc/router/terminal/terminal.ts`,
+a separate package rather than anything under `apps/desktop/src`, which is why
+every source search for it came back empty. It has fifteen procedures. One of
+them is:
 
-    terminal.send  terminal.snapshot  terminal.listSessions  workspace.list
+```ts
+writeInput: protectedProcedure
+    .input(z.object({
+        terminalId: z.string(),
+        workspaceId: z.string(),
+        data: z.string(),
+    }))
+    .mutation(({ input }) => { ... })
+```
 
-Twelve other names return NOT_FOUND, including `write`, `signal`, `resize`,
-`clearScrollback`, `getSession`, `detach` and `kill`.
+Probed live: `terminal.writeInput` returns **401**, not 404 — the same status as
+`terminal.send`, which this project already calls successfully. The procedure
+exists, it is reachable, and the credentials are in hand.
 
-But the app's own tRPC router — `src/lib/trpc/routers/terminal/terminal.ts` —
-**does** have `write` (raw PTY bytes) and `signal`. So the capability exists one
-layer in. Sending `\x15` or `\x1b` through `terminal.write` would clear a prompt
-today.
+So Superset can clear a stuck prompt today. Sending `\x15` as `data` empties an
+occupied prompt; `\x1b` dismisses a menu. No host change, no upstream request.
 
-The host-service simply does not expose it, and that looks deliberate: four
-procedures, each guarded. The gap is a boundary decision, not a missing feature.
+### But `writeInput` is unguarded, and that is the real design problem
 
-### Which means exposing `terminal.write` would be the wrong fix
+Note what the input schema does not contain: no `expectRevision`, no
+`clientToken`, no `requireEmptyPrompt`. `send` has all three (see its schema
+directly below `writeInput` in the same file). `writeInput` takes an arbitrary
+string and writes it to a PTY.
 
-A raw PTY write on the network surface hands any caller arbitrary bytes into a
-terminal, bypassing the revision check, the client-token dedup and the
-empty-prompt check that are the entire reason a Superset `GREEN` is worth more
-than a tmux one. It would trade the guarantee for the convenience.
+That is the correct shape for the host — something has to be able to type — but
+it means the guarantees do not come free the way they do with `send`. A Superset
+`pane_clear` built on `writeInput` inherits none of them.
 
-The narrow addition keeps both:
-
-    terminal.clearPrompt({ terminalId, expectedRevision, clientToken })
-      -> { phase, revisionBefore, revisionAfter, promptEmptyAfter }
-
-Guarded exactly like `terminal.send` — revision-checked, token-deduplicated —
-writing only a fixed control sequence chosen by the host, never bytes supplied
-by the caller. `promptEmptyAfter` is the one fact a client cannot establish for
-itself, and the reason this belongs in the host rather than here.
-
-Since the host-service is a local checkout rather than an upstream dependency,
-this is a change within reach rather than a request to someone else.
+The guard therefore has to live here, and it is the same closed-table discipline
+`CLEAR_ACTIONS` already uses for tmux: `data` is never caller-supplied, only a
+fixed control byte selected by name from a table in this repo. What changes
+versus tmux is the verification — `snapshot` afterwards can report whether the
+prompt is actually empty, so unlike the tmux path, a Superset `pane_clear` can
+honestly return `prompt_empty: true` instead of `None`.
 
 ## Consequence
 
