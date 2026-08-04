@@ -78,7 +78,14 @@ class StdioTransportTests(unittest.TestCase):
         # A client that can list panes but not send would look like it works and
         # then quietly be useless for the thing the product is for.
         self.assertEqual(
-            tools, {"panes_list", "pane_read", "pane_send", "panes_create"}
+            tools,
+            {
+                "panes_list",
+                "pane_read",
+                "pane_send",
+                "panes_create",
+                "pane_clear",
+            },
         )
 
 

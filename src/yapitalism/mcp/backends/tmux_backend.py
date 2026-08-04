@@ -16,6 +16,7 @@ from ..revision import RevisionTracker
 from ..tmux import (
     TmuxError,
     capture_pane,
+    send_clear_action,
     list_panes,
     new_agent_session,
     observe_runtime,
@@ -95,6 +96,41 @@ class TmuxBackend:
             )
             for pane in panes
         ]
+
+    def clear_prompt(self, target_id: str, action: str = "escape") -> dict[str, object]:
+        """Try to unstick a pane with one named key action.
+
+        Deliberately does NOT claim the prompt is now empty. tmux cannot verify
+        that — it is why empty_prompt_check is False — and a tool that announced
+        "cleared" on the strength of a keystroke would be inventing the
+        guarantee the backend just admitted it lacks.
+
+        What it can say is narrower and true: what it sent, whether the pane
+        changed, and whether a blocking prompt it could recognise before is gone
+        now. The real proof that clearing worked is the next guarded send
+        succeeding, so callers should treat this as a step and read the send's
+        receipt as the verdict.
+        """
+        try:
+            before = capture_pane(target_id, 200)
+            blocking_before = detect_blocking_prompt(before)
+            keys = send_clear_action(target_id, action)
+            time.sleep(0.4)  # let the TUI redraw before looking
+            after = capture_pane(target_id, 200)
+        except TmuxError as error:
+            raise BackendError(str(error)) from None
+
+        blocking_after = detect_blocking_prompt(after)
+        return {
+            "action": action,
+            "keys_sent": list(keys),
+            "pane_changed": after != before,
+            "blocking_before": blocking_before,
+            "blocking_after": blocking_after,
+            "recognised_block_cleared": bool(blocking_before) and not blocking_after,
+            # Never a claim of emptiness — see the docstring.
+            "prompt_empty": None,
+        }
 
     def read_pane(self, target_id: str, lines: int) -> str:
         try:

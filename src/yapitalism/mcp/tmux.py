@@ -300,3 +300,37 @@ def send_enter(target_id: str) -> None:
     """Submit whatever is currently staged in the pane."""
     pane_id = pane_id_from_target(target_id)
     _run(["send-keys", "-t", pane_id, "Enter"])
+
+
+# The complete set of keys this server will send to unstick a pane. Closed for
+# the same reason AGENT_LAUNCHERS is closed: a free-form key tool reachable by
+# voice is arbitrary input into someone's terminal.
+#
+# Enter is deliberately absent and must stay absent. Escape cancels; Enter
+# commits. A misdirected Escape loses a half-typed thought. A misdirected Enter
+# picks whatever menu item is highlighted — on this machine that was
+# "1. Update now (runs `npm install -g @openai/codex`)".
+CLEAR_ACTIONS: dict[str, tuple[str, ...]] = {
+    # Dismiss a dialog or cancel the current input. What Norget's open MCP menu
+    # needs.
+    "escape": ("Escape",),
+    # readline/emacs "kill line": empties an input that already holds text.
+    # What Mahobrain's pending prompt needs.
+    "clear-line": ("C-u",),
+    # Some TUIs clear on Escape only after leaving an inner mode.
+    "escape-twice": ("Escape", "Escape"),
+}
+
+
+def send_clear_action(target_id: str, action: str) -> tuple[str, ...]:
+    """Send one named unstick action. Returns the keys actually sent."""
+    keys = CLEAR_ACTIONS.get(action)
+    if keys is None:
+        known = ", ".join(sorted(CLEAR_ACTIONS))
+        raise TmuxError(f"unknown clear action {action!r}; known: {known}")
+    pane_id = pane_id_from_target(target_id)
+    for key in keys:
+        # One key per call, named — never a literal string, so nothing here can
+        # be read as text to type.
+        _run(["send-keys", "-t", pane_id, key])
+    return keys
