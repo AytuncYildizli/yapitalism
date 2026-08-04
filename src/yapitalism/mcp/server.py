@@ -67,6 +67,17 @@ def panes_list() -> dict[str, object]:
     `path` is the full directory. It is there to tell two identically named
     folders apart, not to be read aloud.
 
+    `command` carries the pane's state. On Superset it is one of:
+      - `idle`           accepts work now
+      - `running`        busy, still accepts work
+      - `waiting_input`  a prompt or menu is waiting on a human. A send WILL be
+        refused. Do not send: read the pane, tell the operator what it is
+        waiting for, and offer `pane_clear` on tmux or a trip to the machine on
+        Superset.
+
+    Checking this first is the difference between a refusal the operator has to
+    decode and a sentence that tells them what to do.
+
     `errors` lists backends that could not be reached. A backend returning no
     panes and a backend that failed are different claims — do not report "no
     terminals" while `errors` is non-empty.
@@ -342,6 +353,72 @@ def panes_create(
             f"pane {outcome.target_id} bos olabilir"
         )
     return {"ok": True, "speak": speak, **outcome.as_dict()}
+
+
+@mcp.tool
+def pane_clear(target_id: str, action: str = "escape") -> dict[str, object]:
+    """Try to unstick a pane whose prompt is blocking a send.
+
+    For when `pane_send` came back RED with `rejected_prompt_not_empty` (text is
+    already sitting in the box) or `rejected_prompt_unreadable` (a menu or
+    overlay is covering it).
+
+    `action` is one of a fixed set — there is no way to send an arbitrary key:
+      - `escape`        dismiss a dialog or cancel the current input
+      - `clear-line`    empty an input that already holds text
+      - `escape-twice`  for TUIs that need to leave an inner mode first
+
+    Enter is not in that set and never will be. Escape cancels, Enter commits:
+    on a menu, Enter picks whatever is highlighted, which is how a stray
+    keystroke runs an install command.
+
+    This does NOT report that the prompt is now empty, because tmux cannot
+    verify that. It reports what was sent, whether the pane changed, and whether
+    a blocking prompt that was recognisable before is gone now. **The proof that
+    clearing worked is the next `pane_send` returning GREEN** — so clear, then
+    send, and speak the send's receipt as the verdict. Never tell the operator
+    the prompt is clear on the strength of this call alone.
+
+    Superset panes are not supported: its host exposes no procedure for
+    emptying a prompt, only for detecting that it is not empty. Clearing one
+    means doing it at the machine, or Superset's host gaining that capability.
+    """
+    try:
+        backend = registry.resolve(target_id)
+    except BackendError as error:
+        return {"ok": False, "error": str(error), "target_id": target_id}
+
+    if not hasattr(backend, "clear_prompt"):
+        return {
+            "ok": False,
+            "error": (
+                f"the {backend.namespace} backend cannot clear a prompt; its host "
+                "exposes no procedure for it. Clear it at the machine."
+            ),
+            "target_id": target_id,
+        }
+
+    try:
+        result = backend.clear_prompt(target_id, action)
+    except BackendError as error:
+        return {"ok": False, "error": str(error), "target_id": target_id}
+
+    if result["recognised_block_cleared"]:
+        speak = (
+            f"{result['blocking_before']} ekrani kapandi. Simdi gonderip "
+            "makbuza bakalim."
+        )
+    elif result["pane_changed"]:
+        speak = (
+            "Tusu gonderdim, terminalde bir sey degisti ama promptun bosaldigini "
+            "dogrulayamam. Gonderip makbuza bakalim."
+        )
+    else:
+        speak = (
+            "Tusu gonderdim ama terminalde hicbir sey degismedi; muhtemelen "
+            "ise yaramadi."
+        )
+    return {"ok": True, "target_id": target_id, "speak": speak, **result}
 
 
 if __name__ == "__main__":

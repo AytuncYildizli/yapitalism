@@ -305,3 +305,78 @@ class BlockingPromptTests(unittest.TestCase):
         self.assertEqual(blocked.as_dict()["blocked_on"], "trust_prompt")
         # Still confirmed: it IS running. Readiness is the separate question.
         self.assertTrue(blocked.runtime_confirmed)
+
+
+class ClearActionWhitelistTests(unittest.TestCase):
+    """Unsticking a pane must not become a free-form key tool.
+
+    Escape cancels; Enter commits. A misdirected Escape loses a half-typed
+    thought. A misdirected Enter picks whatever menu item is highlighted, which
+    on this machine was "1. Update now (runs `npm install -g @openai/codex`)".
+    """
+
+    def test_enter_is_not_a_clear_action_and_never_becomes_one(self) -> None:
+        from yapitalism.mcp.tmux import CLEAR_ACTIONS
+
+        for keys in CLEAR_ACTIONS.values():
+            self.assertNotIn("Enter", keys)
+            self.assertNotIn("C-m", keys)
+            self.assertNotIn("KPEnter", keys)
+
+    def test_the_action_set_is_closed(self) -> None:
+        from yapitalism.mcp.tmux import CLEAR_ACTIONS
+
+        self.assertEqual(set(CLEAR_ACTIONS), {"escape", "clear-line", "escape-twice"})
+
+    def test_an_unknown_action_is_refused_and_names_what_is_allowed(self) -> None:
+        from yapitalism.mcp.tmux import send_clear_action
+
+        with self.assertRaisesRegex(TmuxError, "known: clear-line, escape"):
+            send_clear_action("tmux:%1", "Enter")
+
+    def test_arbitrary_keys_cannot_be_smuggled_through_the_action_name(self) -> None:
+        from yapitalism.mcp.tmux import send_clear_action
+
+        for smuggled in ("Enter", "C-c", "rm -rf /", "Escape Enter", "", "1"):
+            with self.subTest(action=smuggled):
+                with self.assertRaises(TmuxError):
+                    send_clear_action("tmux:%1", smuggled)
+
+
+class ClearNeverClaimsEmptinessTests(unittest.TestCase):
+    def test_prompt_empty_is_reported_as_unknown_not_as_true(self) -> None:
+        """tmux declares empty_prompt_check False; clearing cannot invent it."""
+        import unittest.mock as mock
+
+        from yapitalism.mcp.backends.tmux_backend import TmuxBackend
+
+        with mock.patch(
+            "yapitalism.mcp.backends.tmux_backend.capture_pane",
+            side_effect=["before text", "after text"],
+        ), mock.patch(
+            "yapitalism.mcp.backends.tmux_backend.send_clear_action",
+            return_value=("Escape",),
+        ):
+            result = TmuxBackend().clear_prompt("tmux:%1", "escape")
+
+        self.assertIsNone(result["prompt_empty"])
+        self.assertTrue(result["pane_changed"])
+        self.assertEqual(result["keys_sent"], ["Escape"])
+
+    def test_a_recognised_block_disappearing_is_reported(self) -> None:
+        import unittest.mock as mock
+
+        from yapitalism.mcp.backends.tmux_backend import TmuxBackend
+
+        with mock.patch(
+            "yapitalism.mcp.backends.tmux_backend.capture_pane",
+            side_effect=["Press enter to continue", "normal prompt"],
+        ), mock.patch(
+            "yapitalism.mcp.backends.tmux_backend.send_clear_action",
+            return_value=("Escape",),
+        ):
+            result = TmuxBackend().clear_prompt("tmux:%1", "escape")
+
+        self.assertEqual(result["blocking_before"], "confirm_prompt")
+        self.assertEqual(result["blocking_after"], "")
+        self.assertTrue(result["recognised_block_cleared"])

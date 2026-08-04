@@ -155,7 +155,18 @@ def _speak_rejected(phase: str) -> str:
     if phase == "rejected_confirm_prompt":
         return "Ajan bir onay bekliyor; hiçbir şey yazmadım."
     if phase == "rejected_prompt_not_empty":
-        return "Prompt alanında bekleyen metin var; hiçbir şey yazmadım."
+        return (
+            "Prompt alanında bekleyen metin var; hiçbir şey yazmadım. "
+            "İstersen temizleyip tekrar deneyebilirim."
+        )
+    if phase == "rejected_prompt_unreadable":
+        # Previously fell through to the generic line, so a real and specific
+        # obstruction - an open menu or overlay - was reported as an unexplained
+        # refusal. The information existed and was discarded at the last step.
+        return (
+            "Prompt alanı okunamadı, muhtemelen bir menü ya da katman açık; "
+            "hiçbir şey yazmadım. Ne beklediğine bakabilirim."
+        )
     if phase.startswith("duplicate_"):
         return "Aynı mesajın tekrarını engelledim; ikinci kez yazmadım."
     if phase == "rejected_revision_changed":
