@@ -15,6 +15,7 @@ path on the machine it was written for.
 ### If the package is on your `PATH`
 
     sed -e "s|__YAPITALISM_MCP_BIN__|$(command -v yapitalism-mcp)|" \
+        -e "s|__PATH__|$PATH|" \
         -e "s|__HOME__|$HOME|g" \
         .agents/launchd/com.yapitalism.mcp.plist \
         > ~/Library/LaunchAgents/com.yapitalism.mcp.plist
@@ -33,6 +34,7 @@ refused. A checkout-local virtualenv avoids both that and
     .venv/bin/python -m pip install -e ".[dev]"
 
     sed -e "s|__YAPITALISM_MCP_BIN__|$PWD/.venv/bin/yapitalism-mcp|" \
+        -e "s|__PATH__|$PATH|" \
         -e "s|__HOME__|$HOME|g" \
         .agents/launchd/com.yapitalism.mcp.plist \
         > ~/Library/LaunchAgents/com.yapitalism.mcp.plist
@@ -45,6 +47,16 @@ reports a spawn failure rather than anything mentioning a missing venv.
 Then, either way:
 
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.yapitalism.mcp.plist
+
+## Why `$PATH` is substituted
+
+launchd hands a service a minimal `PATH` and never reads a login shell, so every
+binary this server shells out to disappears. `panes_list` reported **"tmux is not
+installed"** on a machine with tmux at `/opt/homebrew/bin/tmux`, and
+`panes_create` would have failed identically on `codex`, `claude` and `kimi`.
+
+This is invisible from a shell, where everything is on `PATH` already — which is
+why the check below calls a tool instead of only pinging the port.
 
 ## Before installing, stop any manually started server
 
@@ -68,6 +80,11 @@ Then confirm it is really serving MCP rather than merely holding the port:
 
 `200` means it is up. `-L` matters: the endpoint answers `/mcp` with a 307 to
 `/mcp/`, and without it curl reports the redirect instead of the result.
+
+Then call a tool, not just `initialize`. Holding the port and answering the
+protocol both succeed while every backend is broken:
+
+    yapitalism setup    # the tmux row must not say "not on PATH"
 
 Logs are at `~/Library/Logs/yapitalism-mcp.log`.
 

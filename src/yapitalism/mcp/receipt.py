@@ -100,7 +100,7 @@ def build_receipt(
             phase=send.phase,
             accepted=False,
             reason=send.reason or send.phase,
-            speak=_speak_rejected(send.phase),
+            speak=_speak_rejected(send.phase, send.reason),
             missing_guarantees=degraded,
             client_guarantees=client,
         )
@@ -190,7 +190,16 @@ def _speak_guard_caveat(
     return ""
 
 
-def _speak_rejected(phase: str) -> str:
+def _speak_rejected(phase: str, reason: str = "") -> str:
+    if reason == "host_says_occupied_screen_says_empty":
+        # Never advise clearing here: it has been measured not to work. The host
+        # counts a Codex placeholder suggestion as staged text, and there is
+        # nothing in the prompt for a clear to remove.
+        return (
+            "Host yazmayı reddetti ama ekranda prompt boş görünüyor; büyük "
+            "olasılıkla ajanın kendi öneri metnini yazılmış sanıyor. Temizlemek "
+            "burada işe yaramaz."
+        )
     if phase == "rejected_trust_prompt":
         return (
             "Ajan bir güven onayı ekranında bekliyor; oraya yazmak menüden "

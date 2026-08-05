@@ -19,6 +19,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ...adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
+from ...prompt_state import EMPTY, detect_prompt_state
 from .base import (
     CLIENT,
     HOST,
@@ -331,11 +332,34 @@ class SupersetBackend:
             # the prompt caveat. Reporting "prompt_not_verified" for
             # rejected_prompt_not_empty read like a YELLOW footnote on a RED.
             reason=(
-                result.phase
+                self._refusal_reason(target_id, result.phase, baseline.text, result.target_runtime)
                 if not result.dispatched
                 else ("" if result.prompt_verified else "prompt_not_verified")
             ),
         )
+
+    def _refusal_reason(
+        self, target_id: str, phase: str, pane_text: str, runtime: str
+    ) -> str:
+        """Name the refusal, and flag the case where the host and the screen differ.
+
+        Found by dogfooding through the running server. The host refused
+        `rejected_prompt_not_empty` on an idle Codex pane whose prompt read
+        `› Improve documentation in @filename`. That line is a placeholder, proved
+        by `pane_clear` leaving it untouched, and the same client-guarded path
+        judged it EMPTY and delivered a GREEN. So the host's detector counts
+        Codex's own suggestion text as staged input.
+
+        The consequence is not cosmetic. On the guarded path such a pane can never
+        be written to, and the receipt was telling the operator to clear a prompt —
+        advice that had already been shown not to work, because there is nothing
+        there to clear. Distinguishing the two says the true thing instead.
+        """
+        if phase != "rejected_prompt_not_empty":
+            return phase
+        if detect_prompt_state(pane_text, runtime) == EMPTY:
+            return "host_says_occupied_screen_says_empty"
+        return phase
 
     def await_acceptance(
         self, target_id: str, canary: str | None, *, timeout: float = 8.0
