@@ -351,3 +351,13 @@ h1 .hit{
 .installNote{font-family:var(--mono);font-size:.62rem;line-height:1.5;color:#5d5f52}
 .installIn > .btn{justify-self:start;width:auto}
 @media(max-width:410px){.install pre{font-size:.66rem;padding:.8rem .85rem}}
+
+/* The capability table is the point of the install section, so it gets the full
+   width rather than a third of it — a three-column grid would wrap the rows and a
+   wrapped table reads as noise. */
+.installWide {
+  grid-column: 1 / -1;
+}
+.installWide pre {
+  overflow-x: auto;
+}

@@ -71,16 +71,31 @@ emit something.
 
 ### Backends do not prove the same things
 
-Every receipt carries the guarantees its backend could not enforce:
+A receipt carries **who enforced** each guarantee, which is finer than whether:
+
+| | meaning |
+|---|---|
+| `host` | the host refuses the write itself — the check and the write are one operation |
+| `client` | this process checks, then writes; real against what it covers, not atomic |
+| `none` | nothing checks |
 
 ```json
 { "status": "GREEN",
-  "missing_guarantees": ["idempotent_dispatch", "optimistic_revision", "empty_prompt_check"] }
+  "client_guarantees": ["idempotent_dispatch", "empty_prompt_check"],
+  "missing_guarantees": ["optimistic_revision"] }
 ```
 
-Superset's host refuses a write unless the revision still matches, the client token is unused, and
-the prompt is empty. `tmux send-keys` enforces none of that. Both can reach GREEN; they are not the
-same GREEN, and saying so is the difference between a receipt and a decoration.
+`yapitalism setup` prints the table for your machine. On a Superset host carrying the guarded
+`terminal.send`, all three are `host`. On a stock Superset build — which routes `terminal.writeInput`
+and none of the guarded send — they move to `client`, and the send still happens. tmux enforces two
+of three itself and cannot do the third at all.
+
+These levels are asked of the host, not assumed. They were constants describing one machine's build
+until that was caught: every stock user would have received a GREEN asserting three guards their
+host had never heard of.
+
+Both reach GREEN. They are not the same GREEN, and saying so is the difference between a receipt and
+a decoration.
 
 ## Install
 
@@ -95,7 +110,15 @@ yapitalism-mcp
 
 # 3. point your voice client's agent at it, in another shell
 codex mcp add yapitalism --url http://127.0.0.1:8792/mcp
+
+# 4. ask the tool what your machine can actually do
+yapitalism setup
 ```
+
+`setup` interviews the machine rather than printing "installed successfully": which backends are
+usable, which agent CLIs are on `PATH`, whether a Superset host is live and which build it is, and
+the guarantee table above filled in for you. It writes nothing except, if you say yes, the Superset
+manifest — and it names what is still missing with the exact command for each.
 
 Then talk to the voice app: *"list my panes"*, then *"send this to the Codex pane"*.
 
@@ -140,10 +163,21 @@ down to timing.
 
 ### Superset terminals (optional)
 
-The tmux backend needs nothing. To also reach Superset-managed terminals, the backend reads a
-`0600` manifest holding the host endpoint and token, from
-`~/.cache/superset-watch-voice/yapitalism-manifest.json` or `$YAPITALISM_SUPERSET_MANIFEST`.
-Without it `panes_list` still returns your tmux panes and reports Superset in `errors` — a
+The tmux backend needs nothing. Superset needs a `0600` manifest holding the host endpoint and
+token — and you do not write it by hand, because Superset already writes what it needs:
+
+```bash
+yapitalism superset setup            # shows what it found and would do
+yapitalism superset setup --confirm  # writes it
+```
+
+That reads the app's own `~/.superset/host/<organizationId>/manifest.json`, proves the token against
+the live host, picks a default terminal and writes
+`~/.cache/superset-watch-voice/yapitalism-manifest.json` (or `$YAPITALISM_SUPERSET_MANIFEST`). It
+refuses rather than guesses: a source file looser than `0600`, a manifest naming a dead process, or
+two live organizations with no way to choose all stop it. The token is never printed.
+
+Without a manifest, `panes_list` still returns your tmux panes and reports Superset in `errors` — a
 backend that could not be reached is never silently reported as "no terminals".
 
 ### Teaching the voice how to speak the receipts
@@ -188,8 +222,20 @@ Stated plainly, because a receipt system that overclaims is worse than none:
   verifies. Catching it needs an anchor outside the file — see `docs/adr/0004`.
 - **The ledger attests to itself.** Hash verification proves rows were not edited or reordered; it
   does not prove who wrote them, and a wholly fabricated ledger verifies fine.
-- **tmux cannot refuse a duplicate or an occupied prompt.** Declared per receipt, never worked
-  around.
+- **No backend can offer tmux an optimistic-revision guard.** It needs an expectation from the
+  caller — "write only if the pane still looks as it did when I read it" — and `pane_send` takes no
+  expected revision. Reading the pane twice and refusing if it moved would be a different guarantee
+  wearing that name, so it is reported `none` rather than approximated.
+- **The empty-prompt check outside a guarded host is a heuristic.** It reads the rendered screen, so
+  a false "empty" would append to somebody's half-typed text and submit the merge. It therefore
+  refuses on anything short of a confident empty, including screens it cannot read, and `pane_clear`
+  is the way through. Validated against real panes, not a large sample.
+- **The stock-Superset send path is exercised by forcing the internal state a stock host produces,**
+  not against a stock host. The code path is identical; the host's behaviour is inferred from what
+  its bundle does and does not contain.
+- **A guarded Superset host over-refuses Codex placeholder text,** counting the agent's own
+  suggestion line as staged input, so sends to such panes are refused and clearing cannot help. The
+  receipt says exactly that instead of advising a clear. The fix belongs in the host.
 - **A tmux pane's runtime can go stale** between the check and the write. Superset's comes from the
   host's own registry and cannot.
 - Connector-in-voice behaviour in closed clients is undocumented and can change without notice.
