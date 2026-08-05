@@ -11,7 +11,12 @@ const BETA_HREF = "https://github.com/AytuncYildizli/yapitalism";
 const INSTALL_CMD = `pipx install yapitalism
 yapitalism-mcp
 
-codex mcp add yapitalism --url http://127.0.0.1:8792/mcp`;
+codex mcp add yapitalism --url http://127.0.0.1:8792/mcp
+yapitalism setup`;
+
+const SETUP_OUTPUT = `backend    idempotent  revision  empty-prompt  runtime
+tmux       client      none      client        process_tree
+superset   host        host      host          registry`;
 
 const STDIO_CONFIG = `{
   "mcpServers": {
@@ -236,6 +241,19 @@ export function YapitalismPage() {
 								over stdio.
 							</span>
 						</div>
+					</div>
+
+					<div className="installCol installWide">
+						<span className="installStep">03 · it tells you what you actually get</span>
+						<pre>
+							<code>{SETUP_OUTPUT}</code>
+						</pre>
+						<span className="installNote">
+							<code>host</code> means the host refuses the write itself — check and
+							write in one operation. <code>client</code> means this process checks,
+							then writes: real, but not atomic. <code>none</code> means nothing
+							checks. Asked of your host, never assumed, and carried on every receipt.
+						</span>
 					</div>
 
 					<a className="btn alt" href={BETA_HREF} rel="noreferrer" target="_blank">
