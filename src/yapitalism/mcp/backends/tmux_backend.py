@@ -65,6 +65,12 @@ _BLOCKING_PROMPTS: tuple[tuple[str, str], ...] = (
 )
 
 
+#: How long to keep looking for a blocking dialog after the runtime is confirmed.
+#: An agent execs, then draws its dialogs, so this window is the difference
+#: between reporting a started agent and reporting a ready one.
+_BLOCK_SETTLE_SECONDS = 3.0
+
+
 def detect_blocking_prompt(pane_text: str) -> str:
     """Label a known blocking prompt, or "" when none is recognised."""
     haystack = pane_text.lower()
@@ -212,10 +218,23 @@ class TmuxBackend:
 
         # A confirmed runtime is not a ready agent. Look for a blocking prompt
         # before anyone sends work into what is actually a dialog box.
-        try:
-            blocked_on = detect_blocking_prompt(capture_pane(target_id, 60))
-        except TmuxError:
-            blocked_on = ""
+        #
+        # Polled rather than read once, because the dialogs arrive AFTER the exec
+        # this loop just confirmed. Measured live: a fresh codex pane reported
+        # runtime_confirmed with blocked_on empty, and a second later was sitting
+        # on "1. Update now (runs `npm install -g @openai/codex`)" — so the create
+        # call said "codex is running" about an agent behind an install menu. One
+        # early read is indistinguishable from no read at all here.
+        blocked_on = ""
+        settle_deadline = time.monotonic() + _BLOCK_SETTLE_SECONDS
+        while time.monotonic() < settle_deadline:
+            try:
+                blocked_on = detect_blocking_prompt(capture_pane(target_id, 60))
+            except TmuxError:
+                blocked_on = ""
+            if blocked_on:
+                break
+            time.sleep(min(0.3, max(0.0, settle_deadline - time.monotonic())))
 
         return CreateOutcome(
             target_id=target_id,
