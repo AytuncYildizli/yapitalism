@@ -66,6 +66,18 @@ class TrpcError(RuntimeError):
     """A redacted transport or tRPC protocol failure."""
 
 
+class TrpcProcedureMissing(TrpcError):
+    """The host does not route this procedure at all — tRPC answered 404.
+
+    A subclass rather than a sibling, deliberately: every existing
+    `except TrpcError` keeps catching it, so a 404 on any other procedure still
+    fails closed exactly as before. Only the send path looks for the narrower
+    type, because there a 404 says something about the host's BUILD rather than
+    about this request — and nothing was written, which is what makes falling
+    back to another path safe.
+    """
+
+
 class _RejectRedirects(HTTPRedirectHandler):
     def redirect_request(
         self,
@@ -369,6 +381,31 @@ class _TrpcTransport:
         headers["Content-Type"] = "application/json"
         return self._request(Request(url, data=body, headers=headers, method="POST"), None)
 
+    def procedure_exists(self, procedure: str) -> bool:
+        """Whether the host routes this procedure at all.
+
+        Deliberately sends a payload that cannot validate, so the question is
+        answered by tRPC's router without the procedure ever running. tRPC routes
+        before it authenticates and before it validates input, so 404 means
+        absent while 400 and 401 both mean present — reading only "did it fail"
+        would call every procedure missing.
+
+        Any other failure returns False rather than guessing present: a host that
+        cannot be reached must not have capabilities assumed for it.
+        """
+        url = f"{self.config.endpoint}/{procedure}"
+        body = json.dumps({"json": {}}, separators=(",", ":")).encode("utf-8")
+        headers = self._headers()
+        headers["Content-Type"] = "application/json"
+        request = Request(url, data=body, headers=headers, method="POST")
+        try:
+            with self._opener.open(request, timeout=self.config.timeout_seconds):
+                return True
+        except HTTPError as exc:
+            return exc.code != 404
+        except (TimeoutError, socket.timeout, URLError, OSError, http.client.HTTPException):
+            return False
+
     def _headers(self) -> dict[str, str]:
         return {
             "Accept": "application/json",
@@ -383,6 +420,11 @@ class _TrpcTransport:
         except HTTPError as exc:
             if 300 <= exc.code < 400:
                 raise TrpcError("Superset tRPC redirect rejected") from None
+            if exc.code == 404:
+                # tRPC routes before it authenticates and before it validates, so
+                # a 404 means the procedure is absent from this build - not that
+                # the call was malformed or unauthorized.
+                raise TrpcProcedureMissing("Superset tRPC procedure not found") from None
             raise TrpcError(f"Superset tRPC HTTP {exc.code}") from None
         except (TimeoutError, socket.timeout):
             raise TrpcError("Superset tRPC request timed out") from None
@@ -417,6 +459,10 @@ class SupersetAdapter:
         self.config = config
         self._transport = _TrpcTransport(config)
         self._token_claims: dict[str, tuple[str, int]] = {}
+        #: None until the host has been asked whether it has the guarded send.
+        self._host_guards: bool | None = None
+        #: Tokens whose write reached a host that does not deduplicate for us.
+        self._landed_tokens: set[str] = set()
 
     def snapshot(
         self,
@@ -559,6 +605,13 @@ class SupersetAdapter:
                 "unknown",
                 dry_run=True,
             )
+        # Known-unguarded hosts skip straight to the fallback. Unknown ones try the
+        # guarded send first and learn from the answer, so a guarded host pays no
+        # probe round trip at all - the detection is a byproduct of real work.
+        if self._host_guards is False:
+            return self._dispatch_client_guarded(
+                text, expected_revision=expected_revision, token=token
+            )
         payload: dict[str, object] = {
             "terminalId": self.config.terminal_id,
             "workspaceId": self.config.workspace_id,
@@ -570,7 +623,17 @@ class SupersetAdapter:
             "expectRevision": expected_revision,
         }
         # Deliberately one POST only: ambiguous transport failure is surfaced, never retried.
-        data = self._transport.mutation("terminal.send", payload)
+        try:
+            data = self._transport.mutation("terminal.send", payload)
+        except TrpcProcedureMissing:
+            # A stock host. Nothing was written - tRPC rejected the route before
+            # reaching any handler - so continuing on the other path is safe, and
+            # this is NOT the retry the comment above forbids.
+            self._host_guards = False
+            return self._dispatch_client_guarded(
+                text, expected_revision=expected_revision, token=token
+            )
+        self._host_guards = True
         terminal_id = _required_response_string(data, "terminalId")
         if terminal_id != self.config.terminal_id:
             raise TrpcError("Superset send target mismatch")
@@ -615,6 +678,134 @@ class SupersetAdapter:
             target_runtime=runtime,
             revision_after=revision_after,
         )
+
+    def host_enforces_send_guards(self) -> bool:
+        """Whether this host has the guarded `terminal.send`, asked once.
+
+        A stock Superset build routes `terminal.writeInput` but not
+        `terminal.send`; the guarded path with `expectRevision`, `clientToken`
+        and `requireEmptyPrompt` is not part of it. Assuming otherwise is what
+        made this adapter usable on exactly one machine, so the host is asked
+        instead of assumed.
+
+        Cached for the process: the answer is a property of the build, and
+        re-probing per send would add a round trip to every dispatch.
+        """
+        if self._host_guards is None:
+            self._host_guards = self._transport.procedure_exists("terminal.send")
+        return self._host_guards
+
+    def _dispatch_client_guarded(
+        self, text: str, *, expected_revision: int, token: str
+    ) -> DispatchResult:
+        """Submit through `writeInput`, enforcing what this side can enforce.
+
+        This is the path for a host without the guarded send. Two of the three
+        guarantees survive here in a weaker but real form, and the third does
+        not survive at all:
+
+        - optimistic revision: the terminal is re-read and the write is refused
+          if it moved. Not atomic — a change landing between this read and the
+          write is invisible — but it does refuse a stale send.
+        - idempotent dispatch: a token already used for a landed write is
+          refused. Fully effective, because the repeats this protects against
+          are this process's own.
+        - empty prompt: not enforced. `snapshot` returns a screen, and deciding
+          emptiness from it means reimplementing the host's detector by eye. The
+          capability is reported NONE rather than approximated.
+
+        Nothing is withheld for lacking the fork: the send happens, the canary
+        is still checked, and the receipt says which guards were client-side.
+        """
+        if "\n" in text or "\r" in text:
+            # The host's `send` takes text and decides when to submit. writeInput
+            # is raw bytes, so an embedded newline IS a submit: multi-line text
+            # would be delivered as several separate instructions, the first
+            # arriving alone. Refusing is the only honest option here.
+            raise ValueError(
+                "text must be a single line on a host without terminal.send; "
+                "an embedded newline would submit early and split the message"
+            )
+        runtime = self._runtime_from_registry()
+        before = self.snapshot(max_lines=_MAX_LINES)
+        # Token first, revision second, and the order carries meaning. A replay of
+        # a token that already landed is a duplicate whether or not the terminal
+        # moved since — and it usually HAS moved, because the agent started
+        # working on the message. Checking the revision first would report
+        # `rejected_revision_changed` for a message that was delivered, which an
+        # operator reads as "it never arrived" and answers by sending again.
+        if token in self._landed_tokens:
+            return DispatchResult(
+                token,
+                self.config.terminal_id,
+                None,
+                "duplicate_ignored",
+                False,
+                True,
+                before.revision,
+                expected_revision,
+                "unknown",
+                runtime,
+                revision_after=before.revision,
+            )
+        if before.revision != expected_revision:
+            return DispatchResult(
+                token,
+                self.config.terminal_id,
+                None,
+                "rejected_revision_changed",
+                False,
+                False,
+                before.revision,
+                expected_revision,
+                "unknown",
+                runtime,
+                revision_after=before.revision,
+            )
+        base = {
+            "terminalId": self.config.terminal_id,
+            "workspaceId": self.config.workspace_id,
+        }
+        self._transport.mutation("terminal.writeInput", {**base, "data": text})
+        # Recorded before the submit, not after: if the Enter round trip fails
+        # ambiguously, the text is already in the terminal and a retry under the
+        # same token must still be refused.
+        self._landed_tokens.add(token)
+        self._transport.mutation("terminal.writeInput", {**base, "data": "\r"})
+        after = self.snapshot(max_lines=_MAX_LINES)
+        return DispatchResult(
+            client_token=token,
+            terminal_id=self.config.terminal_id,
+            # No host delivery id exists on this path. Inventing one would put a
+            # fabricated evidence reference in a receipt.
+            delivery_id=None,
+            phase="injected",
+            submit_sent=True,
+            duplicate=False,
+            revision_before=before.revision,
+            expected_revision=expected_revision,
+            # The host never judged the prompt, and neither did this.
+            prompt_status="unknown",
+            target_runtime=runtime,
+            revision_after=after.revision,
+        )
+
+    def _runtime_from_registry(self) -> str:
+        """The host's own runtime for this terminal, or "unknown".
+
+        `listSessions` exists on a stock build, so this stays registry-backed
+        rather than falling back to a process scan.
+        """
+        try:
+            sessions = self.list_terminals(self.config.workspace_id)
+        except (TrpcError, ValueError):
+            return "unknown"
+        for row in sessions:
+            if row.get("terminalId") != self.config.terminal_id:
+                continue
+            runtime = row.get("runtime")
+            return runtime if runtime in _RUNTIMES else "unknown"
+        return "unknown"
 
     def validate_canary(
         self,
@@ -820,4 +1011,5 @@ __all__ = [
     "SupersetConfig",
     "TerminalSnapshot",
     "TrpcError",
+    "TrpcProcedureMissing",
 ]

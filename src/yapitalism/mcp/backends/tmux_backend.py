@@ -24,6 +24,7 @@ from ..tmux import (
     send_literal,
 )
 from .base import (
+    NONE,
     AcceptanceOutcome,
     BackendCapabilities,
     BackendError,
@@ -59,9 +60,18 @@ def detect_blocking_prompt(pane_text: str) -> str:
 
 
 _CAPABILITIES = BackendCapabilities(
-    idempotent_dispatch=False,
-    optimistic_revision=False,
-    empty_prompt_check=False,
+    # tmux send-keys has no notion of any of these, and nothing here fakes them:
+    # the revision tracker records what it saw but cannot refuse a write, and
+    # client_token is accepted for interface parity and ignored. Declaring CLIENT
+    # for either would be the overclaim this type exists to prevent.
+    idempotent_dispatch=NONE,
+    optimistic_revision=NONE,
+    # NONE rather than CLIENT even though `send` does decline a RECOGNISED
+    # blocking prompt. That check is pattern matching against states seen before,
+    # so it cannot answer "is the prompt empty" — only "does this look like one of
+    # seven dialogs". A guarantee that silently passes on everything unfamiliar is
+    # not a guarantee.
+    empty_prompt_check=NONE,
     runtime_detection="process_tree",
 )
 

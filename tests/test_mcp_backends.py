@@ -3,6 +3,9 @@ from __future__ import annotations
 import unittest
 
 from yapitalism.mcp.backends.base import (
+    GUARANTEES,
+    HOST,
+    NONE,
     BackendCapabilities,
     BackendError,
     BackendPane,
@@ -23,10 +26,11 @@ class FakeBackend:
         return self._namespace
 
     def capabilities(self) -> BackendCapabilities:
+        level = HOST if self._strong else NONE
         return BackendCapabilities(
-            idempotent_dispatch=self._strong,
-            optimistic_revision=self._strong,
-            empty_prompt_check=self._strong,
+            idempotent_dispatch=level,
+            optimistic_revision=level,
+            empty_prompt_check=level,
             runtime_detection="registry" if self._strong else "process_tree",
         )
 
@@ -62,9 +66,14 @@ class TargetIdTests(unittest.TestCase):
 class CapabilityTests(unittest.TestCase):
     def test_tmux_declares_the_guarantees_it_cannot_make(self) -> None:
         capabilities = TmuxBackend().capabilities()
-        self.assertFalse(capabilities.idempotent_dispatch)
-        self.assertFalse(capabilities.optimistic_revision)
-        self.assertFalse(capabilities.empty_prompt_check)
+        self.assertEqual(capabilities.idempotent_dispatch, NONE)
+        self.assertEqual(capabilities.optimistic_revision, NONE)
+        self.assertEqual(capabilities.empty_prompt_check, NONE)
+        # Nothing is client-enforced either. `send` does decline a RECOGNISED
+        # blocking prompt, and calling that CLIENT would be the overclaim the
+        # enforcement levels exist to stop: it matches seven known dialogs and
+        # passes on everything unfamiliar.
+        self.assertEqual(capabilities.client_enforced, ())
         self.assertEqual(capabilities.runtime_detection, "process_tree")
         self.assertEqual(
             set(capabilities.degraded),
@@ -126,30 +135,29 @@ class RegistryTests(unittest.TestCase):
 class SupersetBackendTests(unittest.TestCase):
     """Contract checks that need no live host and no credentials."""
 
-    def test_namespace_and_capabilities(self) -> None:
+    def test_an_unreachable_host_is_granted_no_guarantees(self) -> None:
+        """Capabilities come from the host, so no host means no claims.
+
+        This test used to assert HOST for all three against a nonexistent
+        manifest, because capabilities were a module constant describing the
+        machine they were written on. That is exactly how a stock Superset user
+        would have been promised three guards their host had never heard of.
+        """
         from yapitalism.mcp.backends.superset_backend import SupersetBackend
 
         backend = SupersetBackend(manifest_path="/nonexistent/manifest.json")
         self.assertEqual(backend.namespace, "superset")
         capabilities = backend.capabilities()
-        self.assertTrue(capabilities.idempotent_dispatch)
-        self.assertTrue(capabilities.optimistic_revision)
-        self.assertTrue(capabilities.empty_prompt_check)
-        # Superset enforces all three, so nothing is degraded — this is the
-        # contrast that stops tmux borrowing its guarantees.
-        self.assertEqual(capabilities.degraded, ())
+        self.assertEqual(capabilities.degraded, GUARANTEES)
+        self.assertEqual(capabilities.client_enforced, ())
+        # Not "registry" either: listSessions reports the runtime, and a host
+        # that cannot be reached reported nothing.
+        self.assertEqual(capabilities.runtime_detection, "unknown")
 
-    def test_runtime_comes_from_the_host_registry_not_a_process_scan(self) -> None:
-        from yapitalism.mcp.backends.superset_backend import SupersetBackend
-
-        # terminal.listSessions returns the runtime from the host's own agent
-        # registry, so it IS available before a write — unlike tmux, which can
-        # only infer it from a process tree that may go stale between the check
-        # and the send.
-        self.assertEqual(
-            SupersetBackend(manifest_path="/nonexistent").capabilities().runtime_detection,
-            "registry",
-        )
+    def test_tmux_runtime_detection_names_its_weaker_method(self) -> None:
+        # tmux can only infer the runtime from a process tree that may go stale
+        # between the check and the send. Superset's registry-backed answer is
+        # asserted in test_capability_honesty, against a host that answers.
         self.assertEqual(TmuxBackend().capabilities().runtime_detection, "process_tree")
 
     def test_missing_manifest_is_a_backend_error_not_a_crash(self) -> None:

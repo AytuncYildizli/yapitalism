@@ -7,11 +7,20 @@ Three outcomes, and the middle one is the whole point:
   canary was supplied, or it never appeared. Unknown is not success.
 - ``RED``    the backend refused the write, or it failed.
 
-The verdict also carries the guarantees the backend did NOT enforce. A tmux
-GREEN and a Superset GREEN are not interchangeable: Superset's host refused the
-write unless the revision matched, the token was unused and the prompt was
-empty, while tmux checked none of those. Saying so is the difference between a
-receipt and a decoration.
+The verdict also carries who enforced each guarantee, which is finer than
+whether. A tmux GREEN and a Superset GREEN are not interchangeable: a guarded
+Superset host refused the write unless the revision matched, the token was
+unused and the prompt was empty, while tmux checked none of those.
+
+And a third case sits between them, which an earlier version of this file could
+not express: a host without the guarded send, where this process checks the
+revision and the token itself a moment before writing. That is a real guarantee
+against a stale or repeated send and a weaker one than the host's, because the
+check and the write are two operations rather than one. Reporting it as either
+"enforced" or "missing" would be a lie in one direction or the other, so
+`client_guarantees` is carried separately from `missing_guarantees`.
+
+Saying all this is the difference between a receipt and a decoration.
 """
 
 from __future__ import annotations
@@ -56,6 +65,10 @@ class Receipt:
     reason: str
     speak: str
     missing_guarantees: tuple[str, ...]
+    #: Guarantees this process enforced instead of the host. Not missing, and not
+    #: the same as host-enforced: the check and the write are two operations, so
+    #: anything landing between them is unseen.
+    client_guarantees: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -68,6 +81,8 @@ class Receipt:
             payload["reason"] = self.reason
         if self.missing_guarantees:
             payload["missing_guarantees"] = list(self.missing_guarantees)
+        if self.client_guarantees:
+            payload["client_guarantees"] = list(self.client_guarantees)
         return payload
 
 
@@ -77,6 +92,7 @@ def build_receipt(
     capabilities: BackendCapabilities,
 ) -> Receipt:
     degraded = capabilities.degraded
+    client = capabilities.client_enforced
 
     if not send.dispatched:
         return Receipt(
@@ -86,20 +102,22 @@ def build_receipt(
             reason=send.reason or send.phase,
             speak=_speak_rejected(send.phase),
             missing_guarantees=degraded,
+            client_guarantees=client,
         )
 
     if acceptance.observed:
-        # Even a proven acceptance says what it could not check.
-        suffix = ""
-        if degraded:
-            suffix = " (bu backend yazmadan önce doğrulayamadığı kontroller var)"
+        # Even a proven acceptance says what it could not check, and who did the
+        # checking. A GREEN whose guards were applied here rather than by the host
+        # is still a GREEN — the agent demonstrably processed the text — but the
+        # two are not interchangeable and the sentence must not pretend they are.
         return Receipt(
             status="GREEN",
             phase=send.phase,
             accepted=True,
             reason="",
-            speak="Ajan aldı ve işledi." + suffix,
+            speak="Ajan aldı ve işledi." + _speak_guard_caveat(degraded, client),
             missing_guarantees=degraded,
+            client_guarantees=client,
         )
 
     if acceptance.reason == "no_canary":
@@ -110,6 +128,7 @@ def build_receipt(
             reason="acceptance_not_testable",
             speak="SARI: Metni gönderdim ama ajanın işlediğini doğrulayamadım.",
             missing_guarantees=degraded,
+            client_guarantees=client,
         )
 
     if acceptance.pane_changed_recently:
@@ -129,6 +148,7 @@ def build_receipt(
                 "Tekrar bakmamı ister misin?"
             ),
             missing_guarantees=degraded,
+            client_guarantees=client,
         )
 
     return Receipt(
@@ -141,7 +161,33 @@ def build_receipt(
             "işlediğine dair kanıt gelmedi."
         ),
         missing_guarantees=degraded,
+        client_guarantees=client,
     )
+
+
+def _speak_guard_caveat(
+    degraded: tuple[str, ...], client: tuple[str, ...]
+) -> str:
+    """The caveat a GREEN has to carry, in the operator's words.
+
+    Three cases rather than two. The old wording had one sentence for "something
+    was unchecked", which would have described a client-enforced guard and an
+    unchecked one identically — the exact collapse that let a stock host's
+    receipt read like the fork's.
+    """
+    if degraded and client:
+        return (
+            " Bazı kontrolleri host değil bu taraf yaptı, bir kontrol de hiç "
+            "yapılmadı."
+        )
+    if client:
+        return (
+            " Kontrolleri host değil bu taraf yaptı; yazmadan hemen önce baktı, "
+            "yazmayı reddedebilecek olan host değildi."
+        )
+    if degraded:
+        return " (bu backend yazmadan önce doğrulayamadığı kontroller var)"
+    return ""
 
 
 def _speak_rejected(phase: str) -> str:

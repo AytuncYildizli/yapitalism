@@ -20,6 +20,9 @@ from pathlib import Path
 
 from ...adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
 from .base import (
+    CLIENT,
+    HOST,
+    NONE,
     AcceptanceOutcome,
     BackendCapabilities,
     BackendError,
@@ -34,13 +37,43 @@ _MANIFEST_DEFAULT = _CACHE_DIR / "yapitalism-manifest.json"
 # fallback, because both constants then pointed at a file that does not exist.
 _MANIFEST_LEGACY = _CACHE_DIR / "relayproof-manifest.json"
 
-_CAPABILITIES = BackendCapabilities(
-    idempotent_dispatch=True,
-    optimistic_revision=True,
-    empty_prompt_check=True,
-    # terminal.listSessions reports the runtime from the host's own agent
-    # registry, so unlike tmux's process scan it can be trusted before a write.
-    runtime_detection="registry",
+# terminal.listSessions exists on every build, so the runtime comes from the
+# host's own agent registry either way — unlike tmux's process scan, it can be
+# trusted before a write.
+_REGISTRY = "registry"
+
+#: A host carrying the guarded `terminal.send`: it is given the expected
+#: revision, a client token and an empty-prompt requirement, and it refuses the
+#: write itself.
+_HOST_GUARDED = BackendCapabilities(
+    idempotent_dispatch=HOST,
+    optimistic_revision=HOST,
+    empty_prompt_check=HOST,
+    runtime_detection=_REGISTRY,
+)
+
+#: A stock host, which routes `terminal.writeInput` but not `terminal.send`.
+#: These used to be declared HOST unconditionally, which promised every stock
+#: user three guards their host had never heard of — the fake GREEN this project
+#: exists to prevent, shipped by the project itself.
+#:
+#: The send still happens and the canary is still checked. Two guards move to
+#: this process in a weaker but real form; the third is reported absent rather
+#: than approximated from a screen dump.
+_CLIENT_GUARDED = BackendCapabilities(
+    idempotent_dispatch=CLIENT,
+    optimistic_revision=CLIENT,
+    empty_prompt_check=NONE,
+    runtime_detection=_REGISTRY,
+)
+
+#: The host could not be asked. Claiming guards for a host that never answered
+#: would be the same overclaim by a quieter route.
+_UNKNOWN_HOST = BackendCapabilities(
+    idempotent_dispatch=NONE,
+    optimistic_revision=NONE,
+    empty_prompt_check=NONE,
+    runtime_detection="unknown",
 )
 
 
@@ -69,7 +102,18 @@ class SupersetBackend:
         return "superset"
 
     def capabilities(self) -> BackendCapabilities:
-        return _CAPABILITIES
+        """What THIS host enforces, asked once and cached by the adapter.
+
+        Previously a module constant describing one machine's build. A receipt is
+        only worth what the thing behind it checked, so the answer has to come
+        from the host rather than from whoever wrote the constant.
+        """
+        try:
+            adapter = self._connect()
+            guarded = adapter.host_enforces_send_guards()
+        except BackendError:
+            return _UNKNOWN_HOST
+        return _HOST_GUARDED if guarded else _CLIENT_GUARDED
 
     def _connect(self) -> SupersetAdapter:
         # Built lazily and cached: constructing it reads a 0600 manifest, and a
