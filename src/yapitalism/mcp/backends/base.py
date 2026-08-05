@@ -4,13 +4,23 @@ One MCP surface, several backends. Target ids carry their namespace
 (`tmux:%0`, `superset:<uuid>`) so routing never has to guess.
 
 `BackendCapabilities` is the load-bearing part. Backends do not offer the same
-guarantees: Superset's host enforces an expected revision, a single-use client
-token, and an empty-prompt check before it writes, while `tmux send-keys` has
-none of those. If both answered the same tools without declaring the
+guarantees: a guarded Superset host enforces an expected revision, a single-use
+client token and an empty-prompt check before it writes, while `tmux send-keys`
+has none of those. If both answered the same tools without declaring the
 difference, a tmux receipt would look identical to a Superset one while proving
-far less — a quiet downgrade on the operator's own machine, and a false GREEN
-on someone else's. Capabilities travel with the receipt so a verdict can only
-claim what the backend actually enforced.
+far less — a quiet downgrade on the operator's own machine, and a false GREEN on
+someone else's.
+
+Two refinements came from getting this wrong. Capabilities are a property of the
+HOST, not of the backend class: the Superset values were constants describing one
+fork build, which would have promised every stock user three guards their host
+had never heard of. And a guarantee has a third state — enforced by this process
+rather than by the host — which a boolean could not express, so a client-side
+check and no check at all read identically.
+
+Capabilities therefore travel with the receipt as HOST, CLIENT or NONE per
+guarantee, and a verdict can only claim what was actually enforced, by whoever
+actually enforced it.
 """
 
 from __future__ import annotations
@@ -23,38 +33,81 @@ class BackendError(RuntimeError):
     """A backend could not answer. Never raised to claim success."""
 
 
+#: The host refuses the write itself. Strongest: the check and the write are one
+#: operation, so nothing can slip between them.
+HOST = "host"
+#: This process checks, then writes. A real guarantee against the mistakes it
+#: covers, but not atomic — anything landing in the gap goes unseen. Never
+#: describe it with the same words as HOST.
+CLIENT = "client"
+#: Nothing checks. The write goes out blind.
+NONE = "none"
+
+_ENFORCEMENT = (HOST, CLIENT, NONE)
+
+#: The three guarantees a send can carry, in the order a receipt lists them.
+GUARANTEES = ("idempotent_dispatch", "optimistic_revision", "empty_prompt_check")
+
+
 @dataclass(frozen=True, slots=True)
 class BackendCapabilities:
-    #: The backend rejects a second write carrying a client token it already saw.
-    idempotent_dispatch: bool
-    #: The backend refuses to write when the terminal moved since it was read.
-    optimistic_revision: bool
-    #: The backend refuses to write over text already staged in the prompt.
-    empty_prompt_check: bool
+    """Who enforces each guarantee — not merely whether it exists.
+
+    These were booleans, and the boolean hid the question that matters. A guard
+    the host applies atomically and a guard this process applies a moment before
+    writing are both "True", and collapsing them let one machine's arrangement
+    read as a property of the product. Superset's fork host enforces all three;
+    a stock Superset build has none of that machinery, and the same `True`
+    would have promised its users something no host ever checked.
+
+    So the values are HOST, CLIENT or NONE, and a receipt reports the last two
+    separately. Nothing is withheld from anyone for lacking the fork — a
+    CLIENT-enforced send still refuses a stale revision and a repeated token —
+    but the verdict says who did the refusing.
+    """
+
+    #: Rejects a second write carrying a client token already seen.
+    idempotent_dispatch: str
+    #: Refuses to write when the terminal moved since it was read.
+    optimistic_revision: str
+    #: Refuses to write over text already staged in the prompt.
+    empty_prompt_check: str
     #: "registry" when the host reports the runtime, "process_tree" when it is
     #: derived here. Derived detection is weaker: it can go stale between the
     #: check and the write.
     runtime_detection: str
 
+    def __post_init__(self) -> None:
+        for name in GUARANTEES:
+            value = getattr(self, name)
+            if value not in _ENFORCEMENT:
+                raise ValueError(
+                    f"{name} must be one of {_ENFORCEMENT}, got {value!r}. "
+                    "Booleans were replaced deliberately: True could not say "
+                    "whether the host or this process did the checking."
+                )
+
     def as_dict(self) -> dict[str, object]:
-        return {
-            "idempotent_dispatch": self.idempotent_dispatch,
-            "optimistic_revision": self.optimistic_revision,
-            "empty_prompt_check": self.empty_prompt_check,
-            "runtime_detection": self.runtime_detection,
-        }
+        payload: dict[str, object] = {name: getattr(self, name) for name in GUARANTEES}
+        payload["runtime_detection"] = self.runtime_detection
+        return payload
+
+    def _at(self, level: str) -> tuple[str, ...]:
+        return tuple(name for name in GUARANTEES if getattr(self, name) == level)
 
     @property
     def degraded(self) -> tuple[str, ...]:
-        """Guarantees this backend does NOT provide, for the receipt to carry."""
-        missing: list[str] = []
-        if not self.idempotent_dispatch:
-            missing.append("idempotent_dispatch")
-        if not self.optimistic_revision:
-            missing.append("optimistic_revision")
-        if not self.empty_prompt_check:
-            missing.append("empty_prompt_check")
-        return tuple(missing)
+        """Guarantees nothing checks. The receipt must carry these."""
+        return self._at(NONE)
+
+    @property
+    def client_enforced(self) -> tuple[str, ...]:
+        """Guarantees this process checks rather than the host.
+
+        Reported separately from `degraded` because they are not absent, and
+        separately from silence because they are not atomic.
+        """
+        return self._at(CLIENT)
 
 
 @dataclass(frozen=True, slots=True)

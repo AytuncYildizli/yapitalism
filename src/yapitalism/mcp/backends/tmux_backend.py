@@ -1,10 +1,23 @@
 """tmux backend.
 
-Honest about what it cannot do. `tmux send-keys` has no notion of an expected
-revision, no client-token dedup, and no way to refuse a write when the agent's
-prompt already holds text — so all three capability flags are False. Runtime is
-derived from the pane's process tree, which is weaker than a host registry
-because a pane can change what it runs between the check and the write.
+Honest about who does the checking. `tmux send-keys` itself has no notion of an
+expected revision, a client token or an occupied prompt — it types. Two of those
+three guarantees are therefore enforced here, before the write, and declared
+CLIENT rather than HOST because a check and a write in two steps are not the same
+thing as a host refusing atomically.
+
+The third stays NONE on purpose. An optimistic-revision guard needs an
+expectation from the caller, and `pane_send` supplies none; reading the pane twice
+and refusing if it moved would be a different guarantee wearing that name.
+
+This was all-NONE until the prompt check went in, and the reason matters: without
+it, `send` appended to whatever was staged in the prompt and the Enter submitted
+the merge, so a half-typed thought and a voice instruction arrived as one
+corrupted message. Declaring the gap honestly did not make that behaviour
+acceptable.
+
+Runtime is derived from the pane's process tree, which is weaker than a host
+registry because a pane can change what it runs between the check and the write.
 """
 
 from __future__ import annotations
@@ -12,6 +25,8 @@ from __future__ import annotations
 import time
 
 from ...adapters.superset import _canary_could_appear, _structured_canary_observed
+from ...prompt_state import EMPTY, HAS_TEXT, detect_prompt_state
+from ...tokens import BoundedTokens
 from ..revision import RevisionTracker
 from ..tmux import (
     TmuxError,
@@ -24,6 +39,9 @@ from ..tmux import (
     send_literal,
 )
 from .base import (
+    AGENT_RUNTIMES,
+    CLIENT,
+    NONE,
     AcceptanceOutcome,
     BackendCapabilities,
     BackendError,
@@ -49,6 +67,12 @@ _BLOCKING_PROMPTS: tuple[tuple[str, str], ...] = (
 )
 
 
+#: How long to keep looking for a blocking dialog after the runtime is confirmed.
+#: An agent execs, then draws its dialogs, so this window is the difference
+#: between reporting a started agent and reporting a ready one.
+_BLOCK_SETTLE_SECONDS = 3.0
+
+
 def detect_blocking_prompt(pane_text: str) -> str:
     """Label a known blocking prompt, or "" when none is recognised."""
     haystack = pane_text.lower()
@@ -58,10 +82,25 @@ def detect_blocking_prompt(pane_text: str) -> str:
     return ""
 
 
-_CAPABILITIES = BackendCapabilities(
-    idempotent_dispatch=False,
-    optimistic_revision=False,
-    empty_prompt_check=False,
+TMUX_CAPABILITIES = BackendCapabilities(
+    # Real, and the repeats it protects against are this process's own - a retried
+    # voice turn, a client resend - so tracking them here is fully effective
+    # rather than approximate.
+    idempotent_dispatch=CLIENT,
+    # Stays NONE, and not for lack of trying. An optimistic-revision guard needs an
+    # expectation from the caller: "write only if the pane still looks as it did
+    # when I read it". No caller supplies one - `pane_send` takes no expected
+    # revision - so there is nothing to compare against. Reading the pane twice and
+    # refusing if it moved would be a DIFFERENT guarantee (don't type into a busy
+    # pane) wearing this one's name, which is the overclaim these levels exist to
+    # stop. Making it real means threading an expectation through the MCP surface.
+    optimistic_revision=NONE,
+    # CLIENT: `send` judges the prompt before writing and declines on anything
+    # short of a confident EMPTY. Weaker than the host's atomic check - the screen
+    # can change between the read and the write - but it is a check, and the
+    # alternative was appending to somebody's half-typed text and submitting the
+    # merge.
+    empty_prompt_check=CLIENT,
     runtime_detection="process_tree",
 )
 
@@ -69,13 +108,18 @@ _CAPABILITIES = BackendCapabilities(
 class TmuxBackend:
     def __init__(self) -> None:
         self._revisions = RevisionTracker()
+        #: Tokens whose write reached the pane. tmux cannot deduplicate for us.
+        #: Bounded — this server runs for weeks under launchd.
+        self._landed_tokens = BoundedTokens()
+        #: Tokens burned by a write that has not been confirmed to complete.
+        self._ambiguous_tokens: set[str] = set()
 
     @property
     def namespace(self) -> str:
         return "tmux"
 
     def capabilities(self) -> BackendCapabilities:
-        return _CAPABILITIES
+        return TMUX_CAPABILITIES
 
     def list_panes(self) -> list[BackendPane]:
         try:
@@ -179,10 +223,23 @@ class TmuxBackend:
 
         # A confirmed runtime is not a ready agent. Look for a blocking prompt
         # before anyone sends work into what is actually a dialog box.
-        try:
-            blocked_on = detect_blocking_prompt(capture_pane(target_id, 60))
-        except TmuxError:
-            blocked_on = ""
+        #
+        # Polled rather than read once, because the dialogs arrive AFTER the exec
+        # this loop just confirmed. Measured live: a fresh codex pane reported
+        # runtime_confirmed with blocked_on empty, and a second later was sitting
+        # on "1. Update now (runs `npm install -g @openai/codex`)" — so the create
+        # call said "codex is running" about an agent behind an install menu. One
+        # early read is indistinguishable from no read at all here.
+        blocked_on = ""
+        settle_deadline = time.monotonic() + _BLOCK_SETTLE_SECONDS
+        while time.monotonic() < settle_deadline:
+            try:
+                blocked_on = detect_blocking_prompt(capture_pane(target_id, 60))
+            except TmuxError:
+                blocked_on = ""
+            if blocked_on:
+                break
+            time.sleep(min(0.3, max(0.0, settle_deadline - time.monotonic())))
 
         return CreateOutcome(
             target_id=target_id,
@@ -231,14 +288,83 @@ class TmuxBackend:
                     reason=blocking,
                 )
 
+            runtime = self._runtime_of(target_id)
+            # Nothing enforced this before, and it should have from the start.
+            # `classify_tree` exists because "a pane that used to run an agent and
+            # now runs a plain shell must never be treated as an agent target, or a
+            # spoken instruction becomes an arbitrary shell command" — and then the
+            # send path never checked. Typing into a shell and pressing Enter IS
+            # running a command, reachable by voice.
+            #
+            # The prompt check below happens to refuse these too, because an
+            # unknown runtime has no marker to judge, but relying on that would
+            # leave a security boundary as a side effect of a heuristic.
+            if runtime not in AGENT_RUNTIMES:
+                return SendOutcome(
+                    phase="rejected_not_an_agent",
+                    dispatched=False,
+                    runtime=runtime,
+                    reason=f"pane is running {runtime or 'something unrecognised'}",
+                )
+
+            # The dialog table above recognises seven known screens. This catches
+            # the case it cannot: a prompt simply holding text. send-keys does not
+            # replace that text, it appends to it, and the Enter submits the merge
+            # — so a half-typed thought and a voice instruction arrive as one
+            # corrupted message. Refusing on anything short of a confident EMPTY
+            # is the same rule the guarded Superset host applies, and `pane_clear`
+            # is the way out of both.
+            prompt_state = detect_prompt_state(before, runtime)
+            if prompt_state != EMPTY:
+                return SendOutcome(
+                    phase=(
+                        "rejected_prompt_not_empty"
+                        if prompt_state == HAS_TEXT
+                        else "rejected_prompt_unreadable"
+                    ),
+                    dispatched=False,
+                    runtime=runtime,
+                    reason=prompt_state,
+                )
+
+            # Real dedup, not parity. The repeats this protects against are this
+            # process's own — a retried voice turn, a client resend — so tracking
+            # them here is fully effective rather than approximate.
+            if client_token in self._landed_tokens:
+                # A token burned by a write that failed ambiguously is not a
+                # duplicate: nothing may have arrived. Calling it one would claim a
+                # delivery that never happened.
+                ambiguous = client_token in self._ambiguous_tokens
+                return SendOutcome(
+                    phase=(
+                        "duplicate_after_ambiguous_write"
+                        if ambiguous
+                        else "duplicate_ignored"
+                    ),
+                    dispatched=False,
+                    runtime=runtime,
+                    reason=(
+                        "client_token was burned by a write that failed ambiguously"
+                        if ambiguous
+                        else "client_token already used for a write that landed"
+                    ),
+                )
+
             revision_before = self._revisions.observe(target_id, before)
             if canary is not None:
                 if _canary_could_appear(before, canary):
                     raise BackendError("canary was already present in the pane")
                 if _canary_could_appear(text, canary):
                     raise BackendError("canary must not occur in the submitted text")
+            # Burned before the write: if send-keys half-succeeds the text is
+            # already in the pane and a retry under the same token must still be
+            # refused. Marked ambiguous until both calls return, so the refusal can
+            # say whether anything is known to have landed.
+            self._landed_tokens.add(client_token)
+            self._ambiguous_tokens.add(client_token)
             send_literal(target_id, text)
             send_enter(target_id)
+            self._ambiguous_tokens.discard(client_token)
             after = capture_pane(target_id, 1000)
         except TmuxError as error:
             raise BackendError(str(error)) from None

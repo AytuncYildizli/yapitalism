@@ -21,6 +21,16 @@
   <dict>
     <key>YAPITALISM_MCP_HOST</key><string>127.0.0.1</string>
     <key>YAPITALISM_MCP_PORT</key><string>8792</string>
+    <!--
+      launchd hands a service a minimal PATH — /usr/bin:/bin:/usr/sbin:/sbin and
+      little else — and it does NOT read a login shell. Every binary this server
+      shells out to therefore vanishes: `panes_list` reported "tmux is not
+      installed" on a machine with tmux at /opt/homebrew/bin/tmux, and
+      `panes_create` would have failed the same way on codex, claude and kimi.
+      Found by calling the tools through the running service rather than in a
+      shell, which is the only place the difference shows.
+    -->
+    <key>PATH</key><string>__PATH__</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>

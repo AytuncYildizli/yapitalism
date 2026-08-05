@@ -18,6 +18,8 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from ...canary import strip_terminal_decoration
+from ...prompt_state import EMPTY, HAS_TEXT, detect_prompt_state
+from ...tokens import BoundedTokens
 from ...model import EvidenceEvent, Leg, LegState, Provenance
 
 _MANIFEST_MAX_BYTES = 64 * 1024
@@ -31,6 +33,10 @@ _KNOWN_MANIFEST_KEYS = {
     "terminal_id",
     "timeout_seconds",
 }
+# Phases a HOST response may carry. `staged_not_submitted` and
+# `duplicate_after_ambiguous_write` are deliberately absent: no host reports them —
+# they are produced only by the client-guarded path, which constructs its own
+# result rather than parsing one.
 _SEND_PHASES = {
     "injected",
     "duplicate_ignored",
@@ -64,6 +70,18 @@ _AGENT_RUNTIMES = {"codex", "claude", "kimi"}
 
 class TrpcError(RuntimeError):
     """A redacted transport or tRPC protocol failure."""
+
+
+class TrpcProcedureMissing(TrpcError):
+    """The host does not route this procedure at all — tRPC answered 404.
+
+    A subclass rather than a sibling, deliberately: every existing
+    `except TrpcError` keeps catching it, so a 404 on any other procedure still
+    fails closed exactly as before. Only the send path looks for the narrower
+    type, because there a 404 says something about the host's BUILD rather than
+    about this request — and nothing was written, which is what makes falling
+    back to another path safe.
+    """
 
 
 class _RejectRedirects(HTTPRedirectHandler):
@@ -369,6 +387,31 @@ class _TrpcTransport:
         headers["Content-Type"] = "application/json"
         return self._request(Request(url, data=body, headers=headers, method="POST"), None)
 
+    def procedure_exists(self, procedure: str) -> bool:
+        """Whether the host routes this procedure at all.
+
+        Deliberately sends a payload that cannot validate, so the question is
+        answered by tRPC's router without the procedure ever running. tRPC routes
+        before it authenticates and before it validates input, so 404 means
+        absent while 400 and 401 both mean present — reading only "did it fail"
+        would call every procedure missing.
+
+        Any other failure returns False rather than guessing present: a host that
+        cannot be reached must not have capabilities assumed for it.
+        """
+        url = f"{self.config.endpoint}/{procedure}"
+        body = json.dumps({"json": {}}, separators=(",", ":")).encode("utf-8")
+        headers = self._headers()
+        headers["Content-Type"] = "application/json"
+        request = Request(url, data=body, headers=headers, method="POST")
+        try:
+            with self._opener.open(request, timeout=self.config.timeout_seconds):
+                return True
+        except HTTPError as exc:
+            return exc.code != 404
+        except (TimeoutError, socket.timeout, URLError, OSError, http.client.HTTPException):
+            return False
+
     def _headers(self) -> dict[str, str]:
         return {
             "Accept": "application/json",
@@ -383,6 +426,11 @@ class _TrpcTransport:
         except HTTPError as exc:
             if 300 <= exc.code < 400:
                 raise TrpcError("Superset tRPC redirect rejected") from None
+            if exc.code == 404:
+                # tRPC routes before it authenticates and before it validates, so
+                # a 404 means the procedure is absent from this build - not that
+                # the call was malformed or unauthorized.
+                raise TrpcProcedureMissing("Superset tRPC procedure not found") from None
             raise TrpcError(f"Superset tRPC HTTP {exc.code}") from None
         except (TimeoutError, socket.timeout):
             raise TrpcError("Superset tRPC request timed out") from None
@@ -417,6 +465,14 @@ class SupersetAdapter:
         self.config = config
         self._transport = _TrpcTransport(config)
         self._token_claims: dict[str, tuple[str, int]] = {}
+        #: None until the host has been asked whether it has the guarded send.
+        self._host_guards: bool | None = None
+        #: Tokens whose write reached a host that does not deduplicate for us.
+        #: Bounded: a launchd-managed server runs for weeks, and an unbounded set
+        #: would retain every token ever sent.
+        self._landed_tokens = BoundedTokens()
+        #: Tokens burned by a write that has not been confirmed to complete.
+        self._ambiguous_tokens: set[str] = set()
 
     def snapshot(
         self,
@@ -559,6 +615,13 @@ class SupersetAdapter:
                 "unknown",
                 dry_run=True,
             )
+        # Known-unguarded hosts skip straight to the fallback. Unknown ones try the
+        # guarded send first and learn from the answer, so a guarded host pays no
+        # probe round trip at all - the detection is a byproduct of real work.
+        if self._host_guards is False:
+            return self._dispatch_client_guarded(
+                text, expected_revision=expected_revision, token=token
+            )
         payload: dict[str, object] = {
             "terminalId": self.config.terminal_id,
             "workspaceId": self.config.workspace_id,
@@ -570,7 +633,17 @@ class SupersetAdapter:
             "expectRevision": expected_revision,
         }
         # Deliberately one POST only: ambiguous transport failure is surfaced, never retried.
-        data = self._transport.mutation("terminal.send", payload)
+        try:
+            data = self._transport.mutation("terminal.send", payload)
+        except TrpcProcedureMissing:
+            # A stock host. Nothing was written - tRPC rejected the route before
+            # reaching any handler - so continuing on the other path is safe, and
+            # this is NOT the retry the comment above forbids.
+            self._host_guards = False
+            return self._dispatch_client_guarded(
+                text, expected_revision=expected_revision, token=token
+            )
+        self._host_guards = True
         terminal_id = _required_response_string(data, "terminalId")
         if terminal_id != self.config.terminal_id:
             raise TrpcError("Superset send target mismatch")
@@ -615,6 +688,218 @@ class SupersetAdapter:
             target_runtime=runtime,
             revision_after=revision_after,
         )
+
+    def host_enforces_send_guards(self) -> bool:
+        """Whether this host has the guarded `terminal.send`, asked once.
+
+        A stock Superset build routes `terminal.writeInput` but not
+        `terminal.send`; the guarded path with `expectRevision`, `clientToken`
+        and `requireEmptyPrompt` is not part of it. Assuming otherwise is what
+        made this adapter usable on exactly one machine, so the host is asked
+        instead of assumed.
+
+        Cached for the process: the answer is a property of the build, and
+        re-probing per send would add a round trip to every dispatch.
+        """
+        if self._host_guards is None:
+            self._host_guards = self._transport.procedure_exists("terminal.send")
+        return self._host_guards
+
+    def _dispatch_client_guarded(
+        self, text: str, *, expected_revision: int, token: str
+    ) -> DispatchResult:
+        """Submit through `writeInput`, enforcing what this side can enforce.
+
+        This is the path for a host without the guarded send. Two of the three
+        guarantees survive here in a weaker but real form, and the third does
+        not survive at all:
+
+        - optimistic revision: the terminal is re-read and the write is refused
+          if it moved. Not atomic — a change landing between this read and the
+          write is invisible — but it does refuse a stale send.
+        - idempotent dispatch: a token already used for a landed write is
+          refused. Fully effective, because the repeats this protects against
+          are this process's own.
+        - empty prompt: not enforced. `snapshot` returns a screen, and deciding
+          emptiness from it means reimplementing the host's detector by eye. The
+          capability is reported NONE rather than approximated.
+
+        Nothing is withheld for lacking the fork: the send happens, the canary
+        is still checked, and the receipt says which guards were client-side.
+        """
+        if "\n" in text or "\r" in text:
+            # The host's `send` takes text and decides when to submit. writeInput
+            # is raw bytes, so an embedded newline IS a submit: multi-line text
+            # would be delivered as several separate instructions, the first
+            # arriving alone. Refusing is the only honest option here.
+            raise ValueError(
+                "text must be a single line on a host without terminal.send; "
+                "an embedded newline would submit early and split the message"
+            )
+        runtime = self._runtime_from_registry()
+        before = self.snapshot(max_lines=_MAX_LINES)
+        # Writing blind into an occupied prompt does not replace the staged text,
+        # it concatenates with it and submits the merge — a half-typed thought and
+        # a voice instruction arriving as one corrupted message. That is the exact
+        # case the guarded host refuses, and reporting empty_prompt_check as
+        # unenforced while doing it anyway would be an honest label on a worse
+        # behaviour. So this refuses too, on anything short of a confident EMPTY.
+        prompt_state = detect_prompt_state(before.text, runtime)
+        if prompt_state != EMPTY:
+            return DispatchResult(
+                token,
+                self.config.terminal_id,
+                None,
+                # The same two phases the guarded host uses, so the receipt says
+                # the same sentence and `pane_clear` is the same way out.
+                "rejected_prompt_not_empty"
+                if prompt_state == HAS_TEXT
+                else "rejected_prompt_unreadable",
+                False,
+                False,
+                before.revision,
+                expected_revision,
+                prompt_state,
+                runtime,
+                revision_after=before.revision,
+            )
+        # Token first, revision second, and the order carries meaning. A replay of
+        # a token that already landed is a duplicate whether or not the terminal
+        # moved since — and it usually HAS moved, because the agent started
+        # working on the message. Checking the revision first would report
+        # `rejected_revision_changed` for a message that was delivered, which an
+        # operator reads as "it never arrived" and answers by sending again.
+        if token in self._landed_tokens:
+            return DispatchResult(
+                token,
+                self.config.terminal_id,
+                None,
+                # Two different situations reach here. A token whose write is known
+                # to have landed is a genuine duplicate. A token burned by a write
+                # that failed ambiguously is NOT — nothing may have arrived — and
+                # reporting it as a duplicate would claim a delivery that never
+                # happened, which is the exact overclaim this project exists to
+                # prevent.
+                "duplicate_ignored"
+                if token not in self._ambiguous_tokens
+                else "duplicate_after_ambiguous_write",
+                False,
+                True,
+                before.revision,
+                expected_revision,
+                "unknown",
+                runtime,
+                revision_after=before.revision,
+            )
+        if before.revision != expected_revision:
+            return DispatchResult(
+                token,
+                self.config.terminal_id,
+                None,
+                "rejected_revision_changed",
+                False,
+                False,
+                before.revision,
+                expected_revision,
+                "unknown",
+                runtime,
+                revision_after=before.revision,
+            )
+        base = {
+            "terminalId": self.config.terminal_id,
+            "workspaceId": self.config.workspace_id,
+        }
+        # Burned before the write, not after. If the call fails ambiguously the
+        # bytes may already be in the terminal, so a retry under the same token
+        # must still be refused - but it is recorded as ambiguous until the write
+        # is known to have completed, so the refusal can say which case it is.
+        self._landed_tokens.add(token)
+        self._ambiguous_tokens.add(token)
+        self._transport.mutation("terminal.writeInput", {**base, "data": text})
+        self._ambiguous_tokens.discard(token)
+        after, submitted = self._submit_and_verify(base, runtime)
+        return DispatchResult(
+            client_token=token,
+            terminal_id=self.config.terminal_id,
+            # No host delivery id exists on this path. Inventing one would put a
+            # fabricated evidence reference in a receipt.
+            delivery_id=None,
+            # The text is in the terminal either way; whether it was SENT is a
+            # separate fact, and the first version of this asserted the second
+            # from the first.
+            phase="injected" if submitted else "staged_not_submitted",
+            submit_sent=submitted,
+            duplicate=False,
+            revision_before=before.revision,
+            expected_revision=expected_revision,
+            # This side judged it EMPTY before writing — weaker than the host's
+            # atomic check, but not nothing, so saying "unknown" would now
+            # understate what was actually verified.
+            prompt_status=EMPTY,
+            target_runtime=runtime,
+            revision_after=after.revision,
+        )
+
+    #: How long to let the composer settle before sending the submit, and how long
+    #: to wait for the redraw afterwards. Measured, not guessed: writing the text
+    #: and the carriage return back to back left the text STAGED in a live Codex
+    #: pane, because a TUI composer reads immediately-following input as a
+    #: multi-line paste and keeps the newline as a literal line break. A lone
+    #: carriage return sent afterwards submitted the same text immediately.
+    _SETTLE_SECONDS = 0.4
+    _REDRAW_SECONDS = 0.7
+
+    def _submit_and_verify(
+        self, base: dict[str, object], runtime: str
+    ) -> tuple[TerminalSnapshot, bool]:
+        """Press Enter, then check whether the prompt actually emptied.
+
+        Returns the snapshot taken after the attempt and whether the text left the
+        prompt. Verified rather than assumed: `writeInput` reports success for
+        having delivered bytes, which says nothing about the composer having
+        submitted them, and reporting `submit_sent=True` on that basis is how a
+        message ends up staged forever while the receipt says it was sent.
+
+        Retried once, because the failure observed live was a timing artefact
+        rather than a refusal — and a second Enter is safe here in a way it is not
+        in `pane_clear`: this path has already established the prompt was EMPTY
+        before writing, so there is no menu underneath for a stray Enter to pick.
+        """
+        for attempt in range(2):
+            time.sleep(self._SETTLE_SECONDS * (attempt + 1))
+            self._transport.mutation("terminal.writeInput", {**base, "data": "\r"})
+            time.sleep(self._REDRAW_SECONDS)
+            snapshot = self.snapshot(max_lines=_MAX_LINES)
+            # `== EMPTY`, not `!= HAS_TEXT`. UNKNOWN means the screen could not be
+            # read, and before the write UNKNOWN refuses — so treating it as proof
+            # of submission afterwards would be optimistic in the one direction
+            # that matters: a message still sitting in the prompt while the pane
+            # draws something unrecognisable would be reported as delivered.
+            if detect_prompt_state(snapshot.text, runtime) == EMPTY:
+                return snapshot, True
+        return snapshot, False
+
+    def _runtime_from_registry(self) -> str:
+        """The host's own runtime for this terminal, or "unknown".
+
+        `listSessions` exists on a stock build, so this stays registry-backed
+        rather than falling back to a process scan.
+        """
+        try:
+            sessions = self.list_terminals(self.config.workspace_id)
+        except (TrpcError, ValueError):
+            return "unknown"
+        for row in sessions:
+            if row.get("terminalId") != self.config.terminal_id:
+                continue
+            # Nested under `agent`, not flat on the session. The first version read
+            # `row["runtime"]` — the third time today that a guessed field name got
+            # written instead of read — which would have returned "unknown" for
+            # every real session and made the prompt check below untestable.
+            agent = row.get("agent")
+            runtime = agent.get("runtime") if isinstance(agent, dict) else None
+            return runtime if runtime in _RUNTIMES else "unknown"
+        return "unknown"
 
     def validate_canary(
         self,
@@ -820,4 +1105,5 @@ __all__ = [
     "SupersetConfig",
     "TerminalSnapshot",
     "TrpcError",
+    "TrpcProcedureMissing",
 ]

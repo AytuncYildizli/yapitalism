@@ -19,7 +19,11 @@ from dataclasses import replace
 from pathlib import Path
 
 from ...adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
+from ...prompt_state import EMPTY, detect_prompt_state
 from .base import (
+    CLIENT,
+    HOST,
+    NONE,
     AcceptanceOutcome,
     BackendCapabilities,
     BackendError,
@@ -34,13 +38,49 @@ _MANIFEST_DEFAULT = _CACHE_DIR / "yapitalism-manifest.json"
 # fallback, because both constants then pointed at a file that does not exist.
 _MANIFEST_LEGACY = _CACHE_DIR / "relayproof-manifest.json"
 
-_CAPABILITIES = BackendCapabilities(
-    idempotent_dispatch=True,
-    optimistic_revision=True,
-    empty_prompt_check=True,
-    # terminal.listSessions reports the runtime from the host's own agent
-    # registry, so unlike tmux's process scan it can be trusted before a write.
-    runtime_detection="registry",
+# terminal.listSessions exists on every build, so the runtime comes from the
+# host's own agent registry either way — unlike tmux's process scan, it can be
+# trusted before a write.
+_REGISTRY = "registry"
+
+#: A host carrying the guarded `terminal.send`: it is given the expected
+#: revision, a client token and an empty-prompt requirement, and it refuses the
+#: write itself.
+HOST_GUARDED = BackendCapabilities(
+    idempotent_dispatch=HOST,
+    optimistic_revision=HOST,
+    empty_prompt_check=HOST,
+    runtime_detection=_REGISTRY,
+)
+
+#: A stock host, which routes `terminal.writeInput` but not `terminal.send`.
+#: These used to be declared HOST unconditionally, which promised every stock
+#: user three guards their host had never heard of — the fake GREEN this project
+#: exists to prevent, shipped by the project itself.
+#:
+#: The send still happens and the canary is still checked; all three guards move
+#: to this process in a weaker but real form.
+#:
+#: empty_prompt_check was NONE here for one commit, on the reasoning that judging
+#: emptiness from a screen dump is guessing. True, but it left the fallback
+#: writing blind into an occupied prompt — which concatenates with the staged text
+#: and submits the merge. An accurate label on a corrupting write is worse than a
+#: heuristic that refuses, so it now judges and declines on anything short of a
+#: confident EMPTY.
+CLIENT_GUARDED = BackendCapabilities(
+    idempotent_dispatch=CLIENT,
+    optimistic_revision=CLIENT,
+    empty_prompt_check=CLIENT,
+    runtime_detection=_REGISTRY,
+)
+
+#: The host could not be asked. Claiming guards for a host that never answered
+#: would be the same overclaim by a quieter route.
+UNKNOWN_HOST = BackendCapabilities(
+    idempotent_dispatch=NONE,
+    optimistic_revision=NONE,
+    empty_prompt_check=NONE,
+    runtime_detection="unknown",
 )
 
 
@@ -52,6 +92,26 @@ def resolve_manifest_path() -> Path:
     if _MANIFEST_DEFAULT.exists():
         return _MANIFEST_DEFAULT
     return _MANIFEST_LEGACY
+
+
+def manifest_write_path() -> Path:
+    """Where a newly provisioned manifest should go.
+
+    Deliberately not `resolve_manifest_path()`. That function answers "where do I
+    read from" and falls back to the pre-rebrand filename, which is right for
+    reading and wrong for writing: on a machine with neither file — every new
+    install — it would have `setup` create `relayproof-manifest.json`, naming a
+    stranger's fresh install after a project name they have never seen.
+
+    An existing legacy file is still written in place, so an upgrade refreshes the
+    manifest it is already using instead of leaving a stale one beside a new one.
+    """
+    override = os.environ.get("YAPITALISM_SUPERSET_MANIFEST")
+    if override:
+        return Path(override)
+    if not _MANIFEST_DEFAULT.exists() and _MANIFEST_LEGACY.exists():
+        return _MANIFEST_LEGACY
+    return _MANIFEST_DEFAULT
 
 
 class SupersetBackend:
@@ -69,7 +129,18 @@ class SupersetBackend:
         return "superset"
 
     def capabilities(self) -> BackendCapabilities:
-        return _CAPABILITIES
+        """What THIS host enforces, asked once and cached by the adapter.
+
+        Previously a module constant describing one machine's build. A receipt is
+        only worth what the thing behind it checked, so the answer has to come
+        from the host rather than from whoever wrote the constant.
+        """
+        try:
+            adapter = self._connect()
+            guarded = adapter.host_enforces_send_guards()
+        except BackendError:
+            return UNKNOWN_HOST
+        return HOST_GUARDED if guarded else CLIENT_GUARDED
 
     def _connect(self) -> SupersetAdapter:
         # Built lazily and cached: constructing it reads a 0600 manifest, and a
@@ -257,8 +328,38 @@ class SupersetBackend:
             revision_before=result.revision_before,
             revision_after=result.revision_after,
             delivery_ref=result.delivery_id,
-            reason="" if result.prompt_verified else "prompt_not_verified",
+            # A refusal names what was wrong; only a dispatched send falls back to
+            # the prompt caveat. Reporting "prompt_not_verified" for
+            # rejected_prompt_not_empty read like a YELLOW footnote on a RED.
+            reason=(
+                self._refusal_reason(target_id, result.phase, baseline.text, result.target_runtime)
+                if not result.dispatched
+                else ("" if result.prompt_verified else "prompt_not_verified")
+            ),
         )
+
+    def _refusal_reason(
+        self, target_id: str, phase: str, pane_text: str, runtime: str
+    ) -> str:
+        """Name the refusal, and flag the case where the host and the screen differ.
+
+        Found by dogfooding through the running server. The host refused
+        `rejected_prompt_not_empty` on an idle Codex pane whose prompt read
+        `› Improve documentation in @filename`. That line is a placeholder, proved
+        by `pane_clear` leaving it untouched, and the same client-guarded path
+        judged it EMPTY and delivered a GREEN. So the host's detector counts
+        Codex's own suggestion text as staged input.
+
+        The consequence is not cosmetic. On the guarded path such a pane can never
+        be written to, and the receipt was telling the operator to clear a prompt —
+        advice that had already been shown not to work, because there is nothing
+        there to clear. Distinguishing the two says the true thing instead.
+        """
+        if phase != "rejected_prompt_not_empty":
+            return phase
+        if detect_prompt_state(pane_text, runtime) == EMPTY:
+            return "host_says_occupied_screen_says_empty"
+        return phase
 
     def await_acceptance(
         self, target_id: str, canary: str | None, *, timeout: float = 8.0

@@ -22,7 +22,7 @@ from yapitalism.mcp.backends.base import (
 from yapitalism.mcp.receipt import build_receipt
 from yapitalism.mcp.server import await_acceptance_patiently
 
-CAPABILITIES = BackendCapabilities(True, True, True, "registry")
+CAPABILITIES = BackendCapabilities("host", "host", "host", "registry")
 
 
 class ScriptedBackend:
