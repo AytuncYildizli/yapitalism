@@ -34,6 +34,7 @@ from ..tmux import (
     send_clear_action,
     list_panes,
     new_agent_session,
+    new_resumed_session,
     observe_runtime,
     send_enter,
     send_literal,
@@ -183,6 +184,36 @@ class TmuxBackend:
             raise BackendError(str(error)) from None
 
 
+    def resume_pane(
+        self,
+        session_name: str,
+        runtime: str,
+        cwd: str,
+        session_id: str | None = None,
+        *,
+        timeout: float = 10.0,
+    ) -> CreateOutcome:
+        """Bring a dead agent back in a fresh detached session.
+
+        Reports `fidelity` alongside everything `create_pane` reports, because a
+        caller told only "a pane exists" cannot say which conversation is in it.
+        Without a session id the runtime is asked for its most recent one, and that
+        is `last` — never spoken as "resumed your session".
+
+        An unusable session id raises rather than falling back to `last`: turning
+        "resume this session" into "resume whatever ran last" would come up looking
+        correct and be the wrong conversation.
+        """
+        try:
+            target_id, fidelity = new_resumed_session(
+                session_name, runtime, cwd, session_id
+            )
+        except TmuxError as error:
+            raise BackendError(str(error)) from None
+        return self._settle(
+            target_id, session_name, runtime, cwd, timeout=timeout, fidelity=fidelity
+        )
+
     def create_pane(
         self,
         session_name: str,
@@ -209,7 +240,24 @@ class TmuxBackend:
             target_id = new_agent_session(session_name, runtime, cwd)
         except TmuxError as error:
             raise BackendError(str(error)) from None
+        return self._settle(target_id, session_name, runtime, cwd, timeout=timeout)
 
+    def _settle(
+        self,
+        target_id: str,
+        session_name: str,
+        runtime: str,
+        cwd: str,
+        *,
+        timeout: float,
+        fidelity: str = "",
+    ) -> CreateOutcome:
+        """Confirm what is running, then look for a dialog in front of it.
+
+        Shared by create and resume: a resumed agent draws the same trust prompt
+        and the same update menu a fresh one does, and reporting readiness for one
+        while not the other would be an accident of which path was written first.
+        """
         deadline = time.monotonic() + timeout
         observed = "unknown"
         while time.monotonic() < deadline:
@@ -250,6 +298,7 @@ class TmuxBackend:
             cwd=cwd,
             reason="" if observed == runtime else "runtime_not_observed",
             blocked_on=blocked_on,
+            fidelity=fidelity,
         )
 
     def send(

@@ -244,6 +244,66 @@ def build_new_session_args(
     ]
 
 
+def build_resume_session_args(
+    session_name: str,
+    runtime: str,
+    cwd: str,
+    session_id: str | None = None,
+    width: int = 200,
+    height: int = 50,
+) -> list[str]:
+    """Argv for a detached session that RESUMES an agent instead of starting one.
+
+    Shares every guard with build_new_session_args - name validation, dimension
+    bounds, a real directory, the `--` terminator - and differs only in what
+    follows it, which comes from the closed resume table rather than
+    AGENT_LAUNCHERS. Pure and separately tested for the same reason: the argv IS
+    the security boundary, and asserting on it proves the terminator and the
+    whitelist hold without launching an agent.
+    """
+    from .resume import resume_argv_for
+
+    plan = resume_argv_for(runtime, session_id)
+    if plan is None:
+        if runtime not in AGENT_LAUNCHERS:
+            known = ", ".join(sorted(AGENT_LAUNCHERS))
+            raise TmuxError(f"unknown runtime {runtime!r}; known runtimes: {known}")
+        raise TmuxError(
+            f"session id {session_id!r} is not a usable session id; refusing rather "
+            "than resuming whatever ran last"
+        )
+    args = build_new_session_args(session_name, runtime, cwd, width, height)
+    # Everything up to and including `--` is already validated; replace only the
+    # command after it.
+    terminator = args.index("--")
+    return [*args[: terminator + 1], *plan.argv]
+
+
+def new_resumed_session(
+    session_name: str,
+    runtime: str,
+    cwd: str,
+    session_id: str | None = None,
+    width: int = 200,
+    height: int = 50,
+) -> tuple[str, str]:
+    """Resume one known agent in a fresh detached session.
+
+    Returns (target_id, fidelity). The fidelity travels with the pane id because
+    a caller that only learns "a pane exists" cannot say which conversation is in
+    it.
+    """
+    from .resume import resume_argv_for
+
+    args = build_resume_session_args(session_name, runtime, cwd, session_id, width, height)
+    plan = resume_argv_for(runtime, session_id)
+    assert plan is not None  # build_resume_session_args already refused otherwise
+    pane_id = _run(args).strip()
+    if not re.fullmatch(r"%\d+", pane_id):
+        raise TmuxError(f"tmux did not report a usable pane id: {pane_id[:80]!r}")
+    return f"tmux:{pane_id}", plan.fidelity
+
+
 def new_agent_session(
     session_name: str,
     runtime: str,

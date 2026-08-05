@@ -31,6 +31,7 @@ from .backends.superset_backend import SupersetBackend
 from .backends.tmux_backend import TmuxBackend
 from .receipt import build_receipt, canary_instruction, new_canary
 from .registry import BackendRegistry
+from .resume import speak_fidelity
 
 DEFAULT_HOST = "127.0.0.1"
 # 8787 belongs to the launchd-managed mahmory-api; 8791 was also taken.
@@ -351,6 +352,67 @@ def panes_create(
             f"Oturum acildi ama {runtime} calistigi dogrulanamadi; "
             f"pane {outcome.target_id} bos olabilir"
         )
+    return {"ok": True, "speak": speak, **outcome.as_dict()}
+
+
+@mcp.tool
+def panes_resume(
+    runtime: str,
+    cwd: str,
+    session_id: str = "",
+    session_name: str = "",
+) -> dict[str, object]:
+    """Bring a dead agent back in a fresh tmux session, and say how faithfully.
+
+    This is a WRITE that starts a process. Name the runtime and the directory in
+    one sentence and get an explicit confirmation before calling it.
+
+    `runtime` is one of codex, claude, kimi and selects a fixed resume form — as
+    with `panes_create` there is no way to pass a command or flags, because asking
+    for one is a request to run arbitrary code by voice.
+
+    `session_id` is optional and it changes what can honestly be claimed:
+
+      - given    `fidelity: "exact"` — that recorded session was asked for.
+      - omitted  `fidelity: "last"`  — the runtime was asked for its most recent
+        session. That is NOT a guarantee it is the one the operator meant.
+
+    **Never speak `last` as "I resumed your session".** Say the most recent one was
+    asked for and that it may not be the right conversation. An operator who
+    believes the wrong thing came back will send follow-ups into a stranger's
+    context.
+
+    A `session_id` that fails validation is refused rather than downgraded to
+    `last`. Silently resuming something else would come up looking correct.
+
+    `blocked_on` and `runtime_confirmed` mean exactly what they mean for
+    `panes_create`: a resumed agent draws the same trust prompt and update menu a
+    fresh one does, so read them before sending work.
+    """
+    backend = registry.get("tmux")
+    if backend is None or not hasattr(backend, "resume_pane"):
+        return {"ok": False, "error": "no backend here can resume an agent"}
+
+    name = session_name or f"yap-{runtime}-{uuid4().hex[:8]}"
+    try:
+        outcome = backend.resume_pane(name, runtime, cwd, session_id or None)
+    except BackendError as error:
+        return {"ok": False, "error": str(error), "runtime": runtime, "cwd": cwd}
+
+    fidelity_line = speak_fidelity(outcome.fidelity)
+    if not outcome.runtime_confirmed:
+        speak = (
+            f"Oturum olusturuldu ama {runtime} icinde calismiyor; pane "
+            f"{outcome.target_id}. Temizlenmesi gerekiyor."
+        )
+    elif outcome.blocked_on:
+        speak = (
+            f"{runtime} geri geldi ({fidelity_line}) ama bir ekranda bekliyor "
+            f"({outcome.blocked_on}); is gondermeden once orayi gecmek gerekiyor. "
+            f"Pane {outcome.target_id}"
+        )
+    else:
+        speak = f"{runtime} geri geldi: {fidelity_line}. Pane {outcome.target_id}"
     return {"ok": True, "speak": speak, **outcome.as_dict()}
 
 

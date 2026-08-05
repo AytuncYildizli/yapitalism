@@ -207,6 +207,11 @@ class CreateOutcome:
     #: a trust dialog reports runtime_confirmed and silently swallows the first
     #: instruction sent to it.
     blocked_on: str = ""
+    #: Only set by a resume: "exact" when a recorded session id was used, "last"
+    #: when the runtime was asked for its most recent session — which is NOT a
+    #: guarantee it is the one anybody meant. Empty for a fresh start, where the
+    #: question does not arise.
+    fidelity: str = ""
 
     @property
     def runtime_confirmed(self) -> bool:
@@ -225,6 +230,8 @@ class CreateOutcome:
         }
         if self.blocked_on:
             payload["blocked_on"] = self.blocked_on
+        if self.fidelity:
+            payload["fidelity"] = self.fidelity
         return payload
 
 

@@ -85,6 +85,7 @@ class StdioTransportTests(unittest.TestCase):
                 "pane_send",
                 "panes_create",
                 "pane_clear",
+                "panes_resume",
             },
         )
 
