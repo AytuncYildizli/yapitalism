@@ -32,6 +32,9 @@ _KNOWN_MANIFEST_KEYS = {
     "terminal_id",
     "timeout_seconds",
 }
+# Phases a HOST response may carry. `staged_not_submitted` is deliberately absent:
+# no host reports it — it is produced only by the client-guarded path, which
+# constructs its own result rather than parsing one.
 _SEND_PHASES = {
     "injected",
     "duplicate_ignored",
@@ -797,16 +800,18 @@ class SupersetAdapter:
         # ambiguously, the text is already in the terminal and a retry under the
         # same token must still be refused.
         self._landed_tokens.add(token)
-        self._transport.mutation("terminal.writeInput", {**base, "data": "\r"})
-        after = self.snapshot(max_lines=_MAX_LINES)
+        after, submitted = self._submit_and_verify(base, runtime)
         return DispatchResult(
             client_token=token,
             terminal_id=self.config.terminal_id,
             # No host delivery id exists on this path. Inventing one would put a
             # fabricated evidence reference in a receipt.
             delivery_id=None,
-            phase="injected",
-            submit_sent=True,
+            # The text is in the terminal either way; whether it was SENT is a
+            # separate fact, and the first version of this asserted the second
+            # from the first.
+            phase="injected" if submitted else "staged_not_submitted",
+            submit_sent=submitted,
             duplicate=False,
             revision_before=before.revision,
             expected_revision=expected_revision,
@@ -817,6 +822,40 @@ class SupersetAdapter:
             target_runtime=runtime,
             revision_after=after.revision,
         )
+
+    #: How long to let the composer settle before sending the submit, and how long
+    #: to wait for the redraw afterwards. Measured, not guessed: writing the text
+    #: and the carriage return back to back left the text STAGED in a live Codex
+    #: pane, because a TUI composer reads immediately-following input as a
+    #: multi-line paste and keeps the newline as a literal line break. A lone
+    #: carriage return sent afterwards submitted the same text immediately.
+    _SETTLE_SECONDS = 0.4
+    _REDRAW_SECONDS = 0.7
+
+    def _submit_and_verify(
+        self, base: dict[str, object], runtime: str
+    ) -> tuple[TerminalSnapshot, bool]:
+        """Press Enter, then check whether the prompt actually emptied.
+
+        Returns the snapshot taken after the attempt and whether the text left the
+        prompt. Verified rather than assumed: `writeInput` reports success for
+        having delivered bytes, which says nothing about the composer having
+        submitted them, and reporting `submit_sent=True` on that basis is how a
+        message ends up staged forever while the receipt says it was sent.
+
+        Retried once, because the failure observed live was a timing artefact
+        rather than a refusal — and a second Enter is safe here in a way it is not
+        in `pane_clear`: this path has already established the prompt was EMPTY
+        before writing, so there is no menu underneath for a stray Enter to pick.
+        """
+        for attempt in range(2):
+            time.sleep(self._SETTLE_SECONDS * (attempt + 1))
+            self._transport.mutation("terminal.writeInput", {**base, "data": "\r"})
+            time.sleep(self._REDRAW_SECONDS)
+            snapshot = self.snapshot(max_lines=_MAX_LINES)
+            if detect_prompt_state(snapshot.text, runtime) != HAS_TEXT:
+                return snapshot, True
+        return snapshot, False
 
     def _runtime_from_registry(self) -> str:
         """The host's own runtime for this terminal, or "unknown".

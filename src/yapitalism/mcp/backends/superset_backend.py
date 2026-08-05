@@ -327,7 +327,14 @@ class SupersetBackend:
             revision_before=result.revision_before,
             revision_after=result.revision_after,
             delivery_ref=result.delivery_id,
-            reason="" if result.prompt_verified else "prompt_not_verified",
+            # A refusal names what was wrong; only a dispatched send falls back to
+            # the prompt caveat. Reporting "prompt_not_verified" for
+            # rejected_prompt_not_empty read like a YELLOW footnote on a RED.
+            reason=(
+                result.phase
+                if not result.dispatched
+                else ("" if result.prompt_verified else "prompt_not_verified")
+            ),
         )
 
     def await_acceptance(

@@ -21,6 +21,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from yapitalism.adapters.superset import SupersetAdapter, SupersetConfig
 from yapitalism.mcp.backends.base import (
@@ -65,16 +66,26 @@ OCCUPIED_SCREEN = "some earlier output\n\n\u203a half a typed thought"
 
 
 def stock_responder(
-    written: list[str], *, revisions: list[int] | None = None, screen: str = IDLE_SCREEN
+    written: list[str],
+    *,
+    revisions: list[int] | None = None,
+    screen: str = IDLE_SCREEN,
+    screens_after: list[str] | None = None,
 ) -> Any:
-    """A host that routes writeInput and snapshot but 404s terminal.send."""
+    """A host that routes writeInput and snapshot but 404s terminal.send.
+
+    `screens_after` feeds the post-write snapshots, so a composer that keeps the
+    text can be simulated separately from the pre-write judgement.
+    """
     revs = iter(revisions or [7, 8])
+    later = iter(screens_after or [])
 
     def responder(method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if path.endswith("terminal.send"):
             return {"__status__": 404}
         if path.endswith("terminal.snapshot"):
-            return snapshot_result(text=screen, revision=next(revs, 8))
+            shown = screen if not written else next(later, screen)
+            return snapshot_result(text=shown, revision=next(revs, 8))
         if path.endswith("terminal.writeInput"):
             written.append(payload["data"])
             return result({"success": True})
@@ -143,6 +154,13 @@ class StockHostCapabilityTests(unittest.TestCase):
 
 
 class StockHostDispatchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # The settle and redraw waits are real behaviour with nothing to wait for
+        # against a fake server.
+        patcher = patch("yapitalism.adapters.superset.time.sleep")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_the_fallback_writes_the_text_then_a_carriage_return(self) -> None:
         """The send must actually happen on a stock host, not degrade to nothing."""
         written: list[str] = []
@@ -163,6 +181,31 @@ class StockHostDispatchTests(unittest.TestCase):
         # Judged EMPTY here before writing — weaker than the host's atomic check,
         # so saying "unknown" would now understate what was verified.
         self.assertEqual(outcome.prompt_status, "empty")
+
+    def test_a_composer_that_keeps_the_text_is_reported_staged_not_sent(self) -> None:
+        """The bug live testing found, and the reason submit is verified.
+
+        `writeInput` reports success for delivering bytes, which says nothing about
+        the composer having submitted them. Writing the text and the carriage
+        return back to back left a real Codex pane holding the message: the TUI
+        read the immediately-following input as a multi-line paste and kept the
+        newline as a literal break. The first version asserted `submit_sent=True`
+        from the write succeeding, so the message would have sat there forever
+        while the receipt said it was sent.
+        """
+        written: list[str] = []
+        # A host whose screen still shows the staged text after both Enters.
+        responder = stock_responder(written, screen=IDLE_SCREEN, screens_after=[OCCUPIED_SCREEN] * 4)
+        with FakeTrpcServer(responder) as server, tempfile.TemporaryDirectory() as tmp:
+            adapter = SupersetAdapter(SupersetConfig.from_manifest(write_manifest(tmp, server.endpoint)))
+            outcome = adapter.dispatch(
+                "run the tests", expected_revision=7, client_token="tok-7", confirm=True
+            )
+        self.assertEqual(outcome.phase, "staged_not_submitted")
+        self.assertFalse(outcome.submit_sent)
+        # Enter was tried twice before giving up, and the text really was written.
+        self.assertEqual(written.count("\r"), 2)
+        self.assertIn("run the tests", written)
 
     def test_a_stale_revision_is_refused_without_writing(self) -> None:
         """optimistic_revision, enforced here rather than by the host."""

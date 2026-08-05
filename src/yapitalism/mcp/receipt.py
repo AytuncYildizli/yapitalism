@@ -213,6 +213,14 @@ def _speak_rejected(phase: str) -> str:
             "Prompt alanı okunamadı, muhtemelen bir menü ya da katman açık; "
             "hiçbir şey yazmadım. Ne beklediğine bakabilirim."
         )
+    if phase == "staged_not_submitted":
+        # Observed live: the text reached a Codex composer but two Enters did not
+        # submit it. The operator has to know the message is sitting there, or they
+        # will believe it was delivered and wait.
+        return (
+            "Metni yazdım ama gönderilemedi; prompt'ta duruyor. Enter iki kez "
+            "denendi, kabul edilmedi."
+        )
     if phase.startswith("duplicate_"):
         return "Aynı mesajın tekrarını engelledim; ikinci kez yazmadım."
     if phase == "rejected_revision_changed":
