@@ -18,6 +18,7 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from ...canary import strip_terminal_decoration
+from ...prompt_state import EMPTY, HAS_TEXT, detect_prompt_state
 from ...model import EvidenceEvent, Leg, LegState, Provenance
 
 _MANIFEST_MAX_BYTES = 64 * 1024
@@ -728,6 +729,31 @@ class SupersetAdapter:
             )
         runtime = self._runtime_from_registry()
         before = self.snapshot(max_lines=_MAX_LINES)
+        # Writing blind into an occupied prompt does not replace the staged text,
+        # it concatenates with it and submits the merge — a half-typed thought and
+        # a voice instruction arriving as one corrupted message. That is the exact
+        # case the guarded host refuses, and reporting empty_prompt_check as
+        # unenforced while doing it anyway would be an honest label on a worse
+        # behaviour. So this refuses too, on anything short of a confident EMPTY.
+        prompt_state = detect_prompt_state(before.text, runtime)
+        if prompt_state != EMPTY:
+            return DispatchResult(
+                token,
+                self.config.terminal_id,
+                None,
+                # The same two phases the guarded host uses, so the receipt says
+                # the same sentence and `pane_clear` is the same way out.
+                "rejected_prompt_not_empty"
+                if prompt_state == HAS_TEXT
+                else "rejected_prompt_unreadable",
+                False,
+                False,
+                before.revision,
+                expected_revision,
+                prompt_state,
+                runtime,
+                revision_after=before.revision,
+            )
         # Token first, revision second, and the order carries meaning. A replay of
         # a token that already landed is a duplicate whether or not the terminal
         # moved since — and it usually HAS moved, because the agent started
@@ -784,8 +810,10 @@ class SupersetAdapter:
             duplicate=False,
             revision_before=before.revision,
             expected_revision=expected_revision,
-            # The host never judged the prompt, and neither did this.
-            prompt_status="unknown",
+            # This side judged it EMPTY before writing — weaker than the host's
+            # atomic check, but not nothing, so saying "unknown" would now
+            # understate what was actually verified.
+            prompt_status=EMPTY,
             target_runtime=runtime,
             revision_after=after.revision,
         )
@@ -803,7 +831,12 @@ class SupersetAdapter:
         for row in sessions:
             if row.get("terminalId") != self.config.terminal_id:
                 continue
-            runtime = row.get("runtime")
+            # Nested under `agent`, not flat on the session. The first version read
+            # `row["runtime"]` — the third time today that a guessed field name got
+            # written instead of read — which would have returned "unknown" for
+            # every real session and made the prompt check below untestable.
+            agent = row.get("agent")
+            runtime = agent.get("runtime") if isinstance(agent, dict) else None
             return runtime if runtime in _RUNTIMES else "unknown"
         return "unknown"
 

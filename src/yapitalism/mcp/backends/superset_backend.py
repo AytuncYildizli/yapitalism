@@ -57,13 +57,19 @@ _HOST_GUARDED = BackendCapabilities(
 #: user three guards their host had never heard of — the fake GREEN this project
 #: exists to prevent, shipped by the project itself.
 #:
-#: The send still happens and the canary is still checked. Two guards move to
-#: this process in a weaker but real form; the third is reported absent rather
-#: than approximated from a screen dump.
+#: The send still happens and the canary is still checked; all three guards move
+#: to this process in a weaker but real form.
+#:
+#: empty_prompt_check was NONE here for one commit, on the reasoning that judging
+#: emptiness from a screen dump is guessing. True, but it left the fallback
+#: writing blind into an occupied prompt — which concatenates with the staged text
+#: and submits the merge. An accurate label on a corrupting write is worse than a
+#: heuristic that refuses, so it now judges and declines on anything short of a
+#: confident EMPTY.
 _CLIENT_GUARDED = BackendCapabilities(
     idempotent_dispatch=CLIENT,
     optimistic_revision=CLIENT,
-    empty_prompt_check=NONE,
+    empty_prompt_check=CLIENT,
     runtime_detection=_REGISTRY,
 )
 

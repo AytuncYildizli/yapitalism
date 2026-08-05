@@ -84,7 +84,7 @@ class CapabilityTableTests(unittest.TestCase):
         caps = rows["superset"]
         self.assertEqual(caps.idempotent_dispatch, "client")
         self.assertEqual(caps.optimistic_revision, "client")
-        self.assertEqual(caps.empty_prompt_check, "none")
+        self.assertEqual(caps.empty_prompt_check, "client")
 
     def test_a_guarded_host_shows_host_enforcement(self) -> None:
         rows = capabilities_for(environment(sup=superset("guarded"), manifest_written=True))

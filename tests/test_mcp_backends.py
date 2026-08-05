@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from yapitalism.mcp.backends.base import (
+    CLIENT,
     GUARANTEES,
     HOST,
     NONE,
@@ -64,20 +65,23 @@ class TargetIdTests(unittest.TestCase):
 
 
 class CapabilityTests(unittest.TestCase):
-    def test_tmux_declares_the_guarantees_it_cannot_make(self) -> None:
+    def test_tmux_declares_what_it_checks_and_what_it_cannot(self) -> None:
         capabilities = TmuxBackend().capabilities()
-        self.assertEqual(capabilities.idempotent_dispatch, NONE)
+        # Two of three are real client-side checks: a replayed token is refused,
+        # and the prompt is judged before writing.
+        self.assertEqual(capabilities.idempotent_dispatch, CLIENT)
+        self.assertEqual(capabilities.empty_prompt_check, CLIENT)
+        # This one stays NONE and must not be talked into CLIENT. The guard needs
+        # an expectation from the caller — "write only if the pane still looks as
+        # it did when I read it" — and pane_send takes no expected revision, so
+        # there is nothing to compare against. Reading twice and refusing on
+        # movement would be a different guarantee under this name.
         self.assertEqual(capabilities.optimistic_revision, NONE)
-        self.assertEqual(capabilities.empty_prompt_check, NONE)
-        # Nothing is client-enforced either. `send` does decline a RECOGNISED
-        # blocking prompt, and calling that CLIENT would be the overclaim the
-        # enforcement levels exist to stop: it matches seven known dialogs and
-        # passes on everything unfamiliar.
-        self.assertEqual(capabilities.client_enforced, ())
+        self.assertEqual(capabilities.degraded, ("optimistic_revision",))
         self.assertEqual(capabilities.runtime_detection, "process_tree")
         self.assertEqual(
-            set(capabilities.degraded),
-            {"idempotent_dispatch", "optimistic_revision", "empty_prompt_check"},
+            set(capabilities.client_enforced),
+            {"idempotent_dispatch", "empty_prompt_check"},
         )
 
     def test_a_fully_capable_backend_reports_nothing_degraded(self) -> None:

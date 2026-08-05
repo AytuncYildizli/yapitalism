@@ -25,8 +25,8 @@ from typing import Any
 from yapitalism.adapters.superset import SupersetAdapter, SupersetConfig
 from yapitalism.mcp.backends.base import (
     CLIENT,
+    GUARANTEES,
     HOST,
-    NONE,
     AcceptanceOutcome,
     SendOutcome,
 )
@@ -57,8 +57,15 @@ def write_manifest(directory: str, endpoint: str) -> Path:
     return path
 
 
+#: How an EMPTY codex prompt renders. Read off a live pane on 2026-08-05: the
+#: pane holding `once` showed that text, and the same pane after `pane_clear`
+#: showed this placeholder.
+IDLE_SCREEN = "some earlier output\n\n\u203a Use /skills to list available skills"
+OCCUPIED_SCREEN = "some earlier output\n\n\u203a half a typed thought"
+
+
 def stock_responder(
-    written: list[str], *, revisions: list[int] | None = None
+    written: list[str], *, revisions: list[int] | None = None, screen: str = IDLE_SCREEN
 ) -> Any:
     """A host that routes writeInput and snapshot but 404s terminal.send."""
     revs = iter(revisions or [7, 8])
@@ -67,12 +74,16 @@ def stock_responder(
         if path.endswith("terminal.send"):
             return {"__status__": 404}
         if path.endswith("terminal.snapshot"):
-            return snapshot_result(text="idle", revision=next(revs, 8))
+            return snapshot_result(text=screen, revision=next(revs, 8))
         if path.endswith("terminal.writeInput"):
             written.append(payload["data"])
             return result({"success": True})
         if path.endswith("terminal.listSessions"):
-            return result({"sessions": [{"terminalId": TERMINAL, "runtime": "codex"}]})
+            # `agent.runtime`, the shape the host really sends — a flat "runtime"
+            # key here would let a guessed field name pass its own test.
+            return result(
+                {"sessions": [{"terminalId": TERMINAL, "agent": {"runtime": "codex"}}]}
+            )
         raise AssertionError(f"unexpected procedure: {path}")
 
     return responder
@@ -86,11 +97,13 @@ class StockHostCapabilityTests(unittest.TestCase):
             caps = backend.capabilities()
         self.assertEqual(caps.idempotent_dispatch, CLIENT)
         self.assertEqual(caps.optimistic_revision, CLIENT)
-        # Not approximated. snapshot returns a screen, and deciding emptiness from
-        # it means reimplementing the host's detector by eye.
-        self.assertEqual(caps.empty_prompt_check, NONE)
-        self.assertEqual(caps.client_enforced, ("idempotent_dispatch", "optimistic_revision"))
-        self.assertEqual(caps.degraded, ("empty_prompt_check",))
+        # CLIENT rather than NONE, after a correction: reporting this unenforced
+        # while writing anyway left the fallback appending to staged text and
+        # submitting the merge. An accurate label on a corrupting write is worse
+        # than a heuristic that refuses.
+        self.assertEqual(caps.empty_prompt_check, CLIENT)
+        self.assertEqual(caps.client_enforced, GUARANTEES)
+        self.assertEqual(caps.degraded, ())
         # listSessions exists on a stock build, so this stays registry-backed.
         self.assertEqual(caps.runtime_detection, "registry")
 
@@ -147,8 +160,9 @@ class StockHostDispatchTests(unittest.TestCase):
         # fabricated evidence reference in a receipt.
         self.assertIsNone(outcome.delivery_id)
         # The host never judged the prompt, and neither did this.
-        self.assertEqual(outcome.prompt_status, "unknown")
-        self.assertFalse(outcome.prompt_verified)
+        # Judged EMPTY here before writing — weaker than the host's atomic check,
+        # so saying "unknown" would now understate what was verified.
+        self.assertEqual(outcome.prompt_status, "empty")
 
     def test_a_stale_revision_is_refused_without_writing(self) -> None:
         """optimistic_revision, enforced here rather than by the host."""
@@ -184,6 +198,43 @@ class StockHostDispatchTests(unittest.TestCase):
         self.assertTrue(second.duplicate)
         self.assertFalse(second.dispatched)
         self.assertEqual(written, ["once only", "\r"])
+
+    def test_an_occupied_prompt_is_refused_rather_than_appended_to(self) -> None:
+        """The whole reason empty_prompt_check moved from NONE to CLIENT.
+
+        writeInput does not replace staged text, it concatenates: a half-typed
+        thought and a voice instruction would arrive as one corrupted message,
+        submitted by our own carriage return.
+        """
+        written: list[str] = []
+        responder = stock_responder(written, screen=OCCUPIED_SCREEN)
+        with FakeTrpcServer(responder) as server, tempfile.TemporaryDirectory() as tmp:
+            adapter = SupersetAdapter(SupersetConfig.from_manifest(write_manifest(tmp, server.endpoint)))
+            outcome = adapter.dispatch(
+                "run the tests", expected_revision=7, client_token="tok-5", confirm=True
+            )
+        self.assertEqual(outcome.phase, "rejected_prompt_not_empty")
+        self.assertFalse(outcome.dispatched)
+        self.assertEqual(outcome.prompt_status, "has_text")
+        # Nothing typed at all — a refusal that still wrote would be the bug.
+        self.assertEqual(written, [])
+
+    def test_an_unreadable_screen_is_refused_too(self) -> None:
+        """A menu or overlay has no input line to judge.
+
+        Proceeding on "I could not tell" is precisely where the concatenation
+        happens, so UNKNOWN refuses as well - and `pane_clear` is the way out,
+        after which the screen becomes recognisable.
+        """
+        written: list[str] = []
+        responder = stock_responder(written, screen="a full-screen menu\n1. Update now\n2. Later")
+        with FakeTrpcServer(responder) as server, tempfile.TemporaryDirectory() as tmp:
+            adapter = SupersetAdapter(SupersetConfig.from_manifest(write_manifest(tmp, server.endpoint)))
+            outcome = adapter.dispatch(
+                "run the tests", expected_revision=7, client_token="tok-6", confirm=True
+            )
+        self.assertEqual(outcome.phase, "rejected_prompt_unreadable")
+        self.assertEqual(written, [])
 
     def test_multiline_text_is_refused_rather_than_split(self) -> None:
         """An embedded newline IS a submit when writing raw bytes.
@@ -231,18 +282,22 @@ class ReceiptWordingTests(unittest.TestCase):
         # nobody hears.
         self.assertIn("bu taraf", receipt.speak)
         payload = receipt.as_dict()
-        self.assertEqual(
-            payload["client_guarantees"], ["idempotent_dispatch", "optimistic_revision"]
-        )
-        self.assertEqual(payload["missing_guarantees"], ["empty_prompt_check"])
+        self.assertEqual(payload["client_guarantees"], list(GUARANTEES))
+        # Nothing is unchecked on this path any more, so there is no
+        # missing_guarantees list to carry.
+        self.assertNotIn("missing_guarantees", payload)
 
-    def test_tmux_green_still_reads_as_the_weakest(self) -> None:
+    def test_tmux_green_reports_a_mix_of_checked_and_unchecked(self) -> None:
+        """tmux now checks two of three, so it is neither the old all-NONE nor a
+        client-clean path. The mixed wording exists for exactly this case."""
         from yapitalism.mcp.backends.tmux_backend import _CAPABILITIES
 
         receipt = self.receipt(_CAPABILITIES)
+        payload = receipt.as_dict()
         self.assertEqual(receipt.status, "GREEN")
-        self.assertEqual(receipt.as_dict()["missing_guarantees"], list(_CAPABILITIES.degraded))
-        self.assertNotIn("client_guarantees", receipt.as_dict())
+        self.assertEqual(payload["client_guarantees"], ["idempotent_dispatch", "empty_prompt_check"])
+        self.assertEqual(payload["missing_guarantees"], ["optimistic_revision"])
+        self.assertIn("hiç", receipt.speak)
 
 
 if __name__ == "__main__":  # pragma: no cover
