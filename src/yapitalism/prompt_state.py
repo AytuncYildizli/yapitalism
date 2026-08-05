@@ -50,6 +50,12 @@ _PLACEHOLDERS: dict[str, tuple[str, ...]] = {
         "find and fix a bug in @filename",
         "write tests for @filename",
     ),
+    # Empty because nothing has been OBSERVED, not because Claude draws none. Its
+    # empty composer really is blank after the marker, which is the common case and
+    # judges EMPTY correctly — but when it renders a hint this returns HAS_TEXT and
+    # the send is refused. That over-refuses rather than corrupting, and `pane_clear`
+    # is the way through, so it stays empty until a real screen is read rather than
+    # being filled in from memory of what the hint probably says.
     "claude": (),
     "kimi": (),
 }

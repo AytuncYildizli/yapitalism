@@ -93,28 +93,63 @@ def superset_home() -> Path:
     return Path(override) if override else Path.home() / ".superset"
 
 
-def _read_record(path: Path) -> HostRecord:
+def _read_guarded(path: Path) -> str:
+    """Read a credential file, checking the object that is actually read.
+
+    The first version of this stat'ed the path and then opened it again by name.
+    Two lookups mean the permission and ownership checks can apply to a different
+    file than the one whose contents come back, and `stat` follows symlinks. That
+    is a weaker pattern than the one `_load_manifest` in this same package already
+    uses, on the same class of file, for exactly this reason — so this uses it too
+    rather than inventing a second standard for a bearer token.
+
+    O_NOFOLLOW refuses a symlink outright; fstat interrogates the open descriptor;
+    the read comes from that same descriptor.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        info = path.stat()
+        descriptor = os.open(path, flags)
     except OSError as error:
         raise ProvisionError(f"cannot read {path}: {error.strerror}") from None
-    if not stat.S_ISREG(info.st_mode):
-        raise ProvisionError(f"{path} is not a regular file")
-    if info.st_uid != os.geteuid():
-        raise ProvisionError(f"{path} is not owned by you")
-    if info.st_mode & 0o077:
-        # Superset writes 0600. Anything looser means something changed it, and a
-        # bearer token readable by other accounts should stop the install rather
-        # than be copied into a second file.
-        raise ProvisionError(
-            f"{path} is readable by others (mode {oct(info.st_mode & 0o777)}); "
-            "Superset writes it 0600, so fix that before provisioning"
-        )
-    if info.st_size > _MAX_RECORD_BYTES:
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise ProvisionError(f"{path} is not a regular file")
+        if info.st_uid != os.geteuid():
+            raise ProvisionError(f"{path} is not owned by you")
+        if info.st_mode & 0o077:
+            # Superset writes 0600. Anything looser means something changed it, and
+            # a bearer token readable by other accounts should stop the install
+            # rather than be copied into a second file.
+            raise ProvisionError(
+                f"{path} is readable by others (mode {oct(info.st_mode & 0o777)}); "
+                "Superset writes it 0600, so fix that before provisioning"
+            )
+        if info.st_size > _MAX_RECORD_BYTES:
+            raise ProvisionError(f"{path} is larger than 64 KiB")
+        chunks: list[bytes] = []
+        remaining = _MAX_RECORD_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, 8192))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+    finally:
+        os.close(descriptor)
+    raw = b"".join(chunks)
+    if len(raw) > _MAX_RECORD_BYTES:
         raise ProvisionError(f"{path} is larger than 64 KiB")
     try:
-        payload: Any = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ProvisionError(f"{path} is not valid UTF-8 JSON") from None
+
+
+def _read_record(path: Path) -> HostRecord:
+    try:
+        payload: Any = json.loads(_read_guarded(path))
+    except json.JSONDecodeError:
         raise ProvisionError(f"{path} is not valid UTF-8 JSON") from None
     if not isinstance(payload, dict):
         raise ProvisionError(f"{path} does not contain a JSON object")

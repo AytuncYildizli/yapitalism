@@ -99,16 +99,16 @@ class CapabilityTableTests(unittest.TestCase):
         what a receipt says — the same mistake as hard-coding them per backend,
         one layer up.
         """
-        from yapitalism.mcp.backends.superset_backend import _CLIENT_GUARDED, _HOST_GUARDED
-        from yapitalism.mcp.backends.tmux_backend import _CAPABILITIES
+        from yapitalism.mcp.backends.superset_backend import CLIENT_GUARDED, HOST_GUARDED
+        from yapitalism.mcp.backends.tmux_backend import TMUX_CAPABILITIES
 
         rows = capabilities_for(
             environment(tmux=TMUX_UP, sup=superset("stock"), manifest_written=True)
         )
-        self.assertIs(rows["tmux"], _CAPABILITIES)
-        self.assertIs(rows["superset"], _CLIENT_GUARDED)
+        self.assertIs(rows["tmux"], TMUX_CAPABILITIES)
+        self.assertIs(rows["superset"], CLIENT_GUARDED)
         guarded = capabilities_for(environment(sup=superset("guarded"), manifest_written=True))
-        self.assertIs(guarded["superset"], _HOST_GUARDED)
+        self.assertIs(guarded["superset"], HOST_GUARDED)
 
 
 class NextStepTests(unittest.TestCase):

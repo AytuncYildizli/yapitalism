@@ -26,6 +26,7 @@ import time
 
 from ...adapters.superset import _canary_could_appear, _structured_canary_observed
 from ...prompt_state import EMPTY, HAS_TEXT, detect_prompt_state
+from ...tokens import BoundedTokens
 from ..revision import RevisionTracker
 from ..tmux import (
     TmuxError,
@@ -38,6 +39,7 @@ from ..tmux import (
     send_literal,
 )
 from .base import (
+    AGENT_RUNTIMES,
     CLIENT,
     NONE,
     AcceptanceOutcome,
@@ -80,7 +82,7 @@ def detect_blocking_prompt(pane_text: str) -> str:
     return ""
 
 
-_CAPABILITIES = BackendCapabilities(
+TMUX_CAPABILITIES = BackendCapabilities(
     # Real, and the repeats it protects against are this process's own - a retried
     # voice turn, a client resend - so tracking them here is fully effective
     # rather than approximate.
@@ -107,14 +109,17 @@ class TmuxBackend:
     def __init__(self) -> None:
         self._revisions = RevisionTracker()
         #: Tokens whose write reached the pane. tmux cannot deduplicate for us.
-        self._landed_tokens: set[str] = set()
+        #: Bounded — this server runs for weeks under launchd.
+        self._landed_tokens = BoundedTokens()
+        #: Tokens burned by a write that has not been confirmed to complete.
+        self._ambiguous_tokens: set[str] = set()
 
     @property
     def namespace(self) -> str:
         return "tmux"
 
     def capabilities(self) -> BackendCapabilities:
-        return _CAPABILITIES
+        return TMUX_CAPABILITIES
 
     def list_panes(self) -> list[BackendPane]:
         try:
@@ -284,6 +289,24 @@ class TmuxBackend:
                 )
 
             runtime = self._runtime_of(target_id)
+            # Nothing enforced this before, and it should have from the start.
+            # `classify_tree` exists because "a pane that used to run an agent and
+            # now runs a plain shell must never be treated as an agent target, or a
+            # spoken instruction becomes an arbitrary shell command" — and then the
+            # send path never checked. Typing into a shell and pressing Enter IS
+            # running a command, reachable by voice.
+            #
+            # The prompt check below happens to refuse these too, because an
+            # unknown runtime has no marker to judge, but relying on that would
+            # leave a security boundary as a side effect of a heuristic.
+            if runtime not in AGENT_RUNTIMES:
+                return SendOutcome(
+                    phase="rejected_not_an_agent",
+                    dispatched=False,
+                    runtime=runtime,
+                    reason=f"pane is running {runtime or 'something unrecognised'}",
+                )
+
             # The dialog table above recognises seven known screens. This catches
             # the case it cannot: a prompt simply holding text. send-keys does not
             # replace that text, it appends to it, and the Enter submits the merge
@@ -308,11 +331,23 @@ class TmuxBackend:
             # process's own — a retried voice turn, a client resend — so tracking
             # them here is fully effective rather than approximate.
             if client_token in self._landed_tokens:
+                # A token burned by a write that failed ambiguously is not a
+                # duplicate: nothing may have arrived. Calling it one would claim a
+                # delivery that never happened.
+                ambiguous = client_token in self._ambiguous_tokens
                 return SendOutcome(
-                    phase="duplicate_ignored",
+                    phase=(
+                        "duplicate_after_ambiguous_write"
+                        if ambiguous
+                        else "duplicate_ignored"
+                    ),
                     dispatched=False,
                     runtime=runtime,
-                    reason="client_token already used for a write that landed",
+                    reason=(
+                        "client_token was burned by a write that failed ambiguously"
+                        if ambiguous
+                        else "client_token already used for a write that landed"
+                    ),
                 )
 
             revision_before = self._revisions.observe(target_id, before)
@@ -321,12 +356,15 @@ class TmuxBackend:
                     raise BackendError("canary was already present in the pane")
                 if _canary_could_appear(text, canary):
                     raise BackendError("canary must not occur in the submitted text")
-            # Recorded before the submit: if send-keys half-succeeds, the text is
+            # Burned before the write: if send-keys half-succeeds the text is
             # already in the pane and a retry under the same token must still be
-            # refused.
+            # refused. Marked ambiguous until both calls return, so the refusal can
+            # say whether anything is known to have landed.
             self._landed_tokens.add(client_token)
+            self._ambiguous_tokens.add(client_token)
             send_literal(target_id, text)
             send_enter(target_id)
+            self._ambiguous_tokens.discard(client_token)
             after = capture_pane(target_id, 1000)
         except TmuxError as error:
             raise BackendError(str(error)) from None

@@ -11,6 +11,7 @@ from .adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
 from .claims import ConfirmationClaimStore
 from .ledger import JsonlLedger
 from .mcp.backends.base import GUARANTEES
+from .setup import Environment
 from .model import EvidenceEvent, Leg, LegState, Provenance, Receipt, Status
 
 
@@ -175,7 +176,7 @@ def _mark(present: bool) -> str:
     return "yes" if present else "no "
 
 
-def render_setup(env: Any) -> list[str]:
+def render_setup(env: Environment) -> list[str]:
     """The install report, as lines. Pure, so the whole thing is testable."""
     from .setup import capabilities_for, next_steps
 

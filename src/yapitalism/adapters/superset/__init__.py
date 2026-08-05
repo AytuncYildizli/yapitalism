@@ -19,6 +19,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 from ...canary import strip_terminal_decoration
 from ...prompt_state import EMPTY, HAS_TEXT, detect_prompt_state
+from ...tokens import BoundedTokens
 from ...model import EvidenceEvent, Leg, LegState, Provenance
 
 _MANIFEST_MAX_BYTES = 64 * 1024
@@ -32,9 +33,10 @@ _KNOWN_MANIFEST_KEYS = {
     "terminal_id",
     "timeout_seconds",
 }
-# Phases a HOST response may carry. `staged_not_submitted` is deliberately absent:
-# no host reports it — it is produced only by the client-guarded path, which
-# constructs its own result rather than parsing one.
+# Phases a HOST response may carry. `staged_not_submitted` and
+# `duplicate_after_ambiguous_write` are deliberately absent: no host reports them —
+# they are produced only by the client-guarded path, which constructs its own
+# result rather than parsing one.
 _SEND_PHASES = {
     "injected",
     "duplicate_ignored",
@@ -466,7 +468,11 @@ class SupersetAdapter:
         #: None until the host has been asked whether it has the guarded send.
         self._host_guards: bool | None = None
         #: Tokens whose write reached a host that does not deduplicate for us.
-        self._landed_tokens: set[str] = set()
+        #: Bounded: a launchd-managed server runs for weeks, and an unbounded set
+        #: would retain every token ever sent.
+        self._landed_tokens = BoundedTokens()
+        #: Tokens burned by a write that has not been confirmed to complete.
+        self._ambiguous_tokens: set[str] = set()
 
     def snapshot(
         self,
@@ -768,7 +774,15 @@ class SupersetAdapter:
                 token,
                 self.config.terminal_id,
                 None,
-                "duplicate_ignored",
+                # Two different situations reach here. A token whose write is known
+                # to have landed is a genuine duplicate. A token burned by a write
+                # that failed ambiguously is NOT — nothing may have arrived — and
+                # reporting it as a duplicate would claim a delivery that never
+                # happened, which is the exact overclaim this project exists to
+                # prevent.
+                "duplicate_ignored"
+                if token not in self._ambiguous_tokens
+                else "duplicate_after_ambiguous_write",
                 False,
                 True,
                 before.revision,
@@ -795,11 +809,14 @@ class SupersetAdapter:
             "terminalId": self.config.terminal_id,
             "workspaceId": self.config.workspace_id,
         }
-        self._transport.mutation("terminal.writeInput", {**base, "data": text})
-        # Recorded before the submit, not after: if the Enter round trip fails
-        # ambiguously, the text is already in the terminal and a retry under the
-        # same token must still be refused.
+        # Burned before the write, not after. If the call fails ambiguously the
+        # bytes may already be in the terminal, so a retry under the same token
+        # must still be refused - but it is recorded as ambiguous until the write
+        # is known to have completed, so the refusal can say which case it is.
         self._landed_tokens.add(token)
+        self._ambiguous_tokens.add(token)
+        self._transport.mutation("terminal.writeInput", {**base, "data": text})
+        self._ambiguous_tokens.discard(token)
         after, submitted = self._submit_and_verify(base, runtime)
         return DispatchResult(
             client_token=token,
@@ -853,7 +870,12 @@ class SupersetAdapter:
             self._transport.mutation("terminal.writeInput", {**base, "data": "\r"})
             time.sleep(self._REDRAW_SECONDS)
             snapshot = self.snapshot(max_lines=_MAX_LINES)
-            if detect_prompt_state(snapshot.text, runtime) != HAS_TEXT:
+            # `== EMPTY`, not `!= HAS_TEXT`. UNKNOWN means the screen could not be
+            # read, and before the write UNKNOWN refuses — so treating it as proof
+            # of submission afterwards would be optimistic in the one direction
+            # that matters: a message still sitting in the prompt while the pane
+            # draws something unrecognisable would be reported as delivered.
+            if detect_prompt_state(snapshot.text, runtime) == EMPTY:
                 return snapshot, True
         return snapshot, False
 

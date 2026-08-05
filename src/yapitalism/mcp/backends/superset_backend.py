@@ -46,7 +46,7 @@ _REGISTRY = "registry"
 #: A host carrying the guarded `terminal.send`: it is given the expected
 #: revision, a client token and an empty-prompt requirement, and it refuses the
 #: write itself.
-_HOST_GUARDED = BackendCapabilities(
+HOST_GUARDED = BackendCapabilities(
     idempotent_dispatch=HOST,
     optimistic_revision=HOST,
     empty_prompt_check=HOST,
@@ -67,7 +67,7 @@ _HOST_GUARDED = BackendCapabilities(
 #: and submits the merge. An accurate label on a corrupting write is worse than a
 #: heuristic that refuses, so it now judges and declines on anything short of a
 #: confident EMPTY.
-_CLIENT_GUARDED = BackendCapabilities(
+CLIENT_GUARDED = BackendCapabilities(
     idempotent_dispatch=CLIENT,
     optimistic_revision=CLIENT,
     empty_prompt_check=CLIENT,
@@ -76,7 +76,7 @@ _CLIENT_GUARDED = BackendCapabilities(
 
 #: The host could not be asked. Claiming guards for a host that never answered
 #: would be the same overclaim by a quieter route.
-_UNKNOWN_HOST = BackendCapabilities(
+UNKNOWN_HOST = BackendCapabilities(
     idempotent_dispatch=NONE,
     optimistic_revision=NONE,
     empty_prompt_check=NONE,
@@ -139,8 +139,8 @@ class SupersetBackend:
             adapter = self._connect()
             guarded = adapter.host_enforces_send_guards()
         except BackendError:
-            return _UNKNOWN_HOST
-        return _HOST_GUARDED if guarded else _CLIENT_GUARDED
+            return UNKNOWN_HOST
+        return HOST_GUARDED if guarded else CLIENT_GUARDED
 
     def _connect(self) -> SupersetAdapter:
         # Built lazily and cached: constructing it reads a 0600 manifest, and a

@@ -222,6 +222,19 @@ def _speak_rejected(phase: str, reason: str = "") -> str:
             "Prompt alanı okunamadı, muhtemelen bir menü ya da katman açık; "
             "hiçbir şey yazmadım. Ne beklediğine bakabilirim."
         )
+    if phase == "rejected_not_an_agent":
+        # Typing into a shell and pressing Enter is running a command. The pane may
+        # have been an agent when it was listed and be a shell now.
+        return (
+            "O panelde bir ajan çalışmıyor; oraya yazmak komut çalıştırmak olurdu, "
+            "hiçbir şey göndermedim."
+        )
+    if phase == "duplicate_after_ambiguous_write":
+        # NOT "I blocked a repeat": the first attempt may never have arrived.
+        return (
+            "Bu mesajın ilk denemesi yarıda kaldı, gidip gitmediği belirsiz; ikinci "
+            "kez yazmadım. Paneli okuyup durumu söyleyebilirim."
+        )
     if phase == "staged_not_submitted":
         # Observed live: the text reached a Codex composer but two Enters did not
         # submit it. The operator has to know the message is sitting there, or they

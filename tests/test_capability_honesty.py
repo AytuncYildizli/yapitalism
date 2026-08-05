@@ -298,6 +298,46 @@ class StockHostDispatchTests(unittest.TestCase):
         self.assertEqual(written, [])
 
 
+class RefusalWordingTests(unittest.TestCase):
+    """A RED must never advise something that has been measured not to work, and
+    must never imply a delivery that may not have happened."""
+
+    def speak(self, phase: str, reason: str = "") -> str:
+        from yapitalism.mcp.backends.superset_backend import HOST_GUARDED
+
+        return build_receipt(
+            SendOutcome(phase=phase, dispatched=False, runtime="codex", reason=reason),
+            AcceptanceOutcome(observed=False, attempts=0),
+            HOST_GUARDED,
+        ).speak
+
+    def test_a_host_screen_disagreement_does_not_advise_clearing(self) -> None:
+        """Measured live: the host refused an idle Codex pane whose prompt held only
+        a placeholder, and pane_clear left it untouched twice. The generic line told
+        the operator to clear it, which is a loop."""
+        line = self.speak("rejected_prompt_not_empty", "host_says_occupied_screen_says_empty")
+        self.assertIn("Temizlemek burada işe yaramaz", line)
+        generic = self.speak("rejected_prompt_not_empty")
+        self.assertIn("temizleyip", generic)
+        self.assertNotEqual(line, generic)
+
+    def test_an_ambiguous_write_is_not_spoken_as_a_blocked_repeat(self) -> None:
+        line = self.speak("duplicate_after_ambiguous_write")
+        self.assertIn("belirsiz", line)
+        # The genuine-duplicate wording asserts the first one arrived.
+        self.assertNotIn("Aynı mesajın tekrarını engelledim", line)
+
+    def test_a_shell_pane_refusal_says_why_it_matters(self) -> None:
+        self.assertIn("komut çalıştırmak", self.speak("rejected_not_an_agent"))
+
+    def test_staged_text_is_reported_as_not_sent(self) -> None:
+        """The operator must know the message is sitting in the prompt, or they
+        wait for a reply that cannot come."""
+        line = self.speak("staged_not_submitted")
+        self.assertIn("gönderilemedi", line)
+        self.assertIn("prompt", line)
+
+
 class ReceiptWordingTests(unittest.TestCase):
     """A client-enforced GREEN is still a GREEN, and must not sound identical."""
 
@@ -309,17 +349,17 @@ class ReceiptWordingTests(unittest.TestCase):
         )
 
     def test_host_enforced_green_carries_no_caveat(self) -> None:
-        from yapitalism.mcp.backends.superset_backend import _HOST_GUARDED
+        from yapitalism.mcp.backends.superset_backend import HOST_GUARDED
 
-        receipt = self.receipt(_HOST_GUARDED)
+        receipt = self.receipt(HOST_GUARDED)
         self.assertEqual(receipt.status, "GREEN")
         self.assertEqual(receipt.speak, "Ajan aldı ve işledi.")
         self.assertNotIn("client_guarantees", receipt.as_dict())
 
     def test_client_enforced_green_says_who_checked(self) -> None:
-        from yapitalism.mcp.backends.superset_backend import _CLIENT_GUARDED
+        from yapitalism.mcp.backends.superset_backend import CLIENT_GUARDED
 
-        receipt = self.receipt(_CLIENT_GUARDED)
+        receipt = self.receipt(CLIENT_GUARDED)
         self.assertEqual(receipt.status, "GREEN")
         # The two wordings must differ, or the distinction exists only in a field
         # nobody hears.
@@ -333,9 +373,9 @@ class ReceiptWordingTests(unittest.TestCase):
     def test_tmux_green_reports_a_mix_of_checked_and_unchecked(self) -> None:
         """tmux now checks two of three, so it is neither the old all-NONE nor a
         client-clean path. The mixed wording exists for exactly this case."""
-        from yapitalism.mcp.backends.tmux_backend import _CAPABILITIES
+        from yapitalism.mcp.backends.tmux_backend import TMUX_CAPABILITIES
 
-        receipt = self.receipt(_CAPABILITIES)
+        receipt = self.receipt(TMUX_CAPABILITIES)
         payload = receipt.as_dict()
         self.assertEqual(receipt.status, "GREEN")
         self.assertEqual(payload["client_guarantees"], ["idempotent_dispatch", "empty_prompt_check"])

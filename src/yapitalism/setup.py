@@ -200,15 +200,15 @@ def capabilities_for(env: Environment) -> dict[str, BackendCapabilities]:
     hard-coded these words would be a second source of truth about guarantees,
     which is the mistake this project already made once at a larger scale.
     """
-    from .mcp.backends.superset_backend import _CLIENT_GUARDED, _HOST_GUARDED
-    from .mcp.backends.tmux_backend import _CAPABILITIES as TMUX
+    from .mcp.backends.superset_backend import CLIENT_GUARDED, HOST_GUARDED
+    from .mcp.backends.tmux_backend import TMUX_CAPABILITIES
 
     rows: dict[str, BackendCapabilities] = {}
     for backend in env.usable_backends:
         if backend == "tmux":
-            rows["tmux"] = TMUX
+            rows["tmux"] = TMUX_CAPABILITIES
         elif backend == "superset":
-            rows["superset"] = _HOST_GUARDED if env.superset.build == "guarded" else _CLIENT_GUARDED
+            rows["superset"] = HOST_GUARDED if env.superset.build == "guarded" else CLIENT_GUARDED
     return rows
 
 
