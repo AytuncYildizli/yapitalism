@@ -298,6 +298,52 @@ class StockHostDispatchTests(unittest.TestCase):
         self.assertEqual(written, [])
 
 
+class PromptDetectorSafetyTests(unittest.TestCase):
+    """The two corruption paths a council review found in this detector."""
+
+    def test_a_hint_below_the_composer_does_not_hide_typed_text(self) -> None:
+        """The bug: one marker line used to decide the whole verdict.
+
+        This function does not identify the editable buffer, only lines that start
+        like one. If a runtime draws its hint BELOW the composer, the bottom-most
+        line is the hint, the typed text above is never examined, and the verdict is
+        EMPTY. The send then appends to somebody's sentence and submits the merge —
+        and the merged line still contains the canary, so the receipt comes back
+        GREEN. The error certifies itself.
+        """
+        from yapitalism.prompt_state import HAS_TEXT, detect_prompt_state
+
+        below = "output\n\u203a half a typed thought\n\u203a Use /skills to list available skills"
+        self.assertEqual(detect_prompt_state(below, "codex"), HAS_TEXT)
+        # And the other order, which the old code happened to get right.
+        above = "output\n\u203a Use /skills to list available skills\n\u203a half a typed thought"
+        self.assertEqual(detect_prompt_state(above, "codex"), HAS_TEXT)
+
+    def test_a_placeholder_a_human_could_type_is_not_listed(self) -> None:
+        """Admissibility: an entry needs a token a person would not type.
+
+        "explain this codebase" was listed. Somebody typing exactly that and pausing
+        would have had their prompt judged empty. Every surviving entry carries
+        `@filename` or `/skills`.
+        """
+        from yapitalism.prompt_state import _PLACEHOLDERS, HAS_TEXT, detect_prompt_state
+
+        self.assertEqual(detect_prompt_state("\u203a Explain this codebase", "codex"), HAS_TEXT)
+        for entry in _PLACEHOLDERS["codex"]:
+            with self.subTest(entry=entry):
+                self.assertTrue(
+                    "@filename" in entry or "/skills" in entry,
+                    f"{entry!r} contains nothing a human would not type",
+                )
+
+    def test_all_empty_markers_still_read_empty(self) -> None:
+        """The safe direction must not become "always refuse"."""
+        from yapitalism.prompt_state import EMPTY, detect_prompt_state
+
+        both = "output\n\u203a\n\u203a Use /skills to list available skills"
+        self.assertEqual(detect_prompt_state(both, "codex"), EMPTY)
+
+
 class RefusalWordingTests(unittest.TestCase):
     """A RED must never advise something that has been measured not to work, and
     must never imply a delivery that may not have happened."""
