@@ -165,6 +165,59 @@ def ledger_migrate(source_path: Path, output_path: Path) -> int:
     return 0
 
 
+def _default_manifest_path() -> Path:
+    """Where a provisioned manifest belongs, per the backend's own rule."""
+    from .mcp.backends.superset_backend import manifest_write_path
+
+    return manifest_write_path()
+
+
+def superset_setup(args: argparse.Namespace) -> int:
+    """Provision a manifest from the Superset install already on this machine.
+
+    Prints a plan and writes nothing unless asked, matching `send`'s dry-run
+    default. The plan is worth having on its own: it is also the diagnostic for
+    "why can't this tool see my Superset".
+
+    The token is never printed. It is read, proven against the host, and written
+    to a 0600 file — an installer's terminal is a place people paste into chat.
+    """
+    from .adapters.superset.provision import (
+        ProvisionError,
+        discover_hosts,
+        manifest_payload,
+        probe_binding,
+        select_host,
+        write_manifest,
+    )
+
+    try:
+        record = select_host(discover_hosts(), args.organization)
+        print(f"host        {record.endpoint}  (organization {record.organization_id})")
+        print(f"source      {record.source}  mode 0600, pid {record.pid} alive")
+        binding = probe_binding(record, timeout=args.timeout)
+    except ProvisionError as error:
+        print(f"cannot provision: {error}")
+        return 1
+    print(
+        f"workspace   {binding.workspace_name} ({binding.workspace_id}) "
+        f"— {binding.terminal_count} terminal(s)"
+    )
+    print(f"binding     {binding.terminal_id} running {binding.runtime}")
+    print("token       read and accepted by the host, not printed")
+    payload = manifest_payload(record, binding, timeout=args.timeout)
+    if not args.confirm:
+        print(f"\nwould write {args.output} (0600). Re-run with --confirm to write it.")
+        return 0
+    try:
+        written = write_manifest(payload, args.output, force=args.force)
+    except ProvisionError as error:
+        print(f"cannot provision: {error}")
+        return 1
+    print(f"\nwrote       {written} (0600)")
+    return 0
+
+
 def superset_status(manifest: Path, max_lines: int | None) -> int:
     adapter = SupersetAdapter(SupersetConfig.from_manifest(manifest))
     snapshot = adapter.snapshot(max_lines=max_lines)
@@ -389,6 +442,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     superset_parser = subcommands.add_parser("superset", help="operate a Superset terminal")
     superset_commands = superset_parser.add_subparsers(dest="superset_command", required=True)
+    setup_parser = superset_commands.add_parser(
+        "setup", help="provision a manifest from the Superset app on this machine"
+    )
+    setup_parser.add_argument(
+        "--organization", help="organization id, when more than one host is live"
+    )
+    setup_parser.add_argument("--output", type=Path, default=_default_manifest_path())
+    setup_parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="write the manifest (default: report what it would do)",
+    )
+    setup_parser.add_argument(
+        "--force", action="store_true", help="replace an existing manifest"
+    )
+    setup_parser.add_argument("--timeout", type=float, default=8.0)
+
     status_parser = superset_commands.add_parser("status", help="read terminal snapshot metadata")
     status_parser.add_argument("--manifest", required=True, type=Path)
     status_parser.add_argument("--max-lines", type=int)
@@ -423,6 +493,8 @@ def main(argv: list[str] | None = None) -> int:
         return ledger_manifest(args.ledger)
     if args.command == "ledger" and args.ledger_command == "migrate":
         return ledger_migrate(args.source, args.output)
+    if args.command == "superset" and args.superset_command == "setup":
+        return superset_setup(args)
     if args.command == "superset" and args.superset_command == "status":
         return superset_status(args.manifest, args.max_lines)
     if args.command == "superset" and args.superset_command == "send":

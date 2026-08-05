@@ -87,6 +87,26 @@ def resolve_manifest_path() -> Path:
     return _MANIFEST_LEGACY
 
 
+def manifest_write_path() -> Path:
+    """Where a newly provisioned manifest should go.
+
+    Deliberately not `resolve_manifest_path()`. That function answers "where do I
+    read from" and falls back to the pre-rebrand filename, which is right for
+    reading and wrong for writing: on a machine with neither file — every new
+    install — it would have `setup` create `relayproof-manifest.json`, naming a
+    stranger's fresh install after a project name they have never seen.
+
+    An existing legacy file is still written in place, so an upgrade refreshes the
+    manifest it is already using instead of leaving a stale one beside a new one.
+    """
+    override = os.environ.get("YAPITALISM_SUPERSET_MANIFEST")
+    if override:
+        return Path(override)
+    if not _MANIFEST_DEFAULT.exists() and _MANIFEST_LEGACY.exists():
+        return _MANIFEST_LEGACY
+    return _MANIFEST_DEFAULT
+
+
 class SupersetBackend:
     def __init__(self, manifest_path: Path | str | None = None) -> None:
         self._manifest_path = Path(manifest_path) if manifest_path else resolve_manifest_path()
