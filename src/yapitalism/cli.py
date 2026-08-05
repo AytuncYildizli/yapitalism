@@ -10,6 +10,7 @@ from typing import Any
 from .adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
 from .claims import ConfirmationClaimStore
 from .ledger import JsonlLedger
+from .mcp.backends.base import GUARANTEES
 from .model import EvidenceEvent, Leg, LegState, Provenance, Receipt, Status
 
 
@@ -163,6 +164,98 @@ def ledger_migrate(source_path: Path, output_path: Path) -> int:
         )
     )
     return 0
+
+
+_HTTP_FORM = "codex mcp add yapitalism --url http://127.0.0.1:8792/mcp"
+_STDIO_FORM = '{"mcpServers": {"yapitalism": {"command": "yapitalism-mcp", "args": ["--stdio"]}}}'
+
+
+def _mark(present: bool) -> str:
+    # Words, not colour: this output gets pasted into issues and read over SSH.
+    return "yes" if present else "no "
+
+
+def render_setup(env: Any) -> list[str]:
+    """The install report, as lines. Pure, so the whole thing is testable."""
+    from .setup import capabilities_for, next_steps
+
+    lines = ["What this machine has", ""]
+    lines.append(f"  tmux            {_mark(env.tmux.installed)}  {env.tmux.detail}")
+    for agent, present in env.agents.items():
+        lines.append(f"  {agent:<15} {_mark(present)}  {'on PATH' if present else 'not on PATH'}")
+    lines.append(f"  Superset        {_mark(env.superset.host_live)}  {env.superset.detail}")
+    manifest = (
+        f"present at {env.manifest_path}" if env.manifest_written else f"not written yet ({env.manifest_path})"
+    )
+    lines.append(f"  manifest        {_mark(env.manifest_written)}  {manifest}")
+    for client in env.clients:
+        if client.present:
+            lines.append(f"  {client.name:<15} {_mark(True)}  {client.config_path} ({client.transport})")
+
+    rows = capabilities_for(env)
+    lines += ["", "What that buys you", ""]
+    if not rows:
+        lines.append("  nothing yet — no backend can carry a send on this machine")
+    else:
+        header = f"  {'backend':<10} " + " ".join(f"{name.replace('_', ' '):<19}" for name in GUARANTEES)
+        lines += [header + "runtime", "  " + "-" * (len(header) + 5)]
+        for backend, caps in rows.items():
+            cells = " ".join(f"{getattr(caps, name):<19}" for name in GUARANTEES)
+            lines.append(f"  {backend:<10} {cells}{caps.runtime_detection}")
+        lines += [
+            "",
+            "  host   = the host refuses the write itself; check and write are one operation",
+            "  client = this process checks, then writes; real, but not atomic",
+            "  none   = nothing checks",
+        ]
+
+    steps = next_steps(env)
+    if steps:
+        lines += ["", "What is left", ""]
+        lines += [f"  {index}. {step}" for index, step in enumerate(steps, start=1)]
+    lines += [
+        "",
+        "Registering the server with a client",
+        "",
+        f"  URL clients (Codex):     {_HTTP_FORM}",
+        f"  stdio clients (rest):    {_STDIO_FORM}",
+    ]
+    return lines
+
+
+def setup_report(args: argparse.Namespace) -> int:
+    """Interview the machine, then offer the one action worth offering.
+
+    The offer is gated on a TTY and on `--confirm` never being implied: a setup
+    command that writes while someone is reading its output is indistinguishable
+    from one that ignored them.
+    """
+    import sys
+
+    from .setup import inspect
+
+    env = inspect()
+    for line in render_setup(env):
+        print(line)
+    if not (env.superset.host_live and not env.manifest_written):
+        return 0
+    print("")
+    if not sys.stdin.isatty():
+        print("Superset is live but its manifest is missing; see step above.")
+        return 0
+    answer = input("Write the Superset manifest now? [y/N] ").strip().lower()
+    if answer not in ("y", "yes"):
+        print("Left it alone.")
+        return 0
+    setup_args = argparse.Namespace(
+        organization=None,
+        output=_default_manifest_path(),
+        confirm=True,
+        force=False,
+        timeout=8.0,
+    )
+    print("")
+    return superset_setup(setup_args)
 
 
 def _default_manifest_path() -> Path:
@@ -440,6 +533,11 @@ def build_parser() -> argparse.ArgumentParser:
     ledger_migrate_parser.add_argument("--source", type=Path, required=True)
     ledger_migrate_parser.add_argument("--output", type=Path, required=True)
 
+    subcommands.add_parser(
+        "setup",
+        help="interview this machine: what it has, what that buys, what is missing",
+    )
+
     superset_parser = subcommands.add_parser("superset", help="operate a Superset terminal")
     superset_commands = superset_parser.add_subparsers(dest="superset_command", required=True)
     setup_parser = superset_commands.add_parser(
@@ -493,6 +591,8 @@ def main(argv: list[str] | None = None) -> int:
         return ledger_manifest(args.ledger)
     if args.command == "ledger" and args.ledger_command == "migrate":
         return ledger_migrate(args.source, args.output)
+    if args.command == "setup":
+        return setup_report(args)
     if args.command == "superset" and args.superset_command == "setup":
         return superset_setup(args)
     if args.command == "superset" and args.superset_command == "status":
