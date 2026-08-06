@@ -141,6 +141,12 @@ class TmuxSendGuardTests(unittest.TestCase):
             self.target, "once only", canary=None, client_token="dup-1"
         )
         self.assertEqual(first.phase, "injected")
+        # A clean screen for the replay. `cat` echoes, so the first send's text is
+        # still on a marker line, and the prompt check now judges EVERY marker line
+        # rather than only the bottom-most one - correctly refusing before the token
+        # check is ever reached. Respawning isolates what this test is about.
+        tmux("respawn-pane", "-k", "-t", "%0", "--", "cat")
+        time.sleep(0.2)
         send_literal(self.target, CODEX_EMPTY)
         before = self.screen()
         second = self.backend.send(
