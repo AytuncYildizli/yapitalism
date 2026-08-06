@@ -110,12 +110,23 @@ def build_receipt(
         # checking. A GREEN whose guards were applied here rather than by the host
         # is still a GREEN — the agent demonstrably processed the text — but the
         # two are not interchangeable and the sentence must not pretend they are.
+        if send.reason == "host_prompt_check_overridden":
+            # The override LEADS. An operator who hears "ajan aldı ve işledi" has
+            # already stopped listening, and a trailing clause about overruling the
+            # host is a footnote on a sentence that sounded like ordinary success.
+            speak = (
+                "Host'un 'prompt dolu' kararını geçersiz kıldım, sen öyle istedin: "
+                "ajan aldı ve işledi. Boş-prompt kontrolünü bu taraf yaptı, "
+                "revision ve token kontrolü host'ta kaldı."
+            )
+        else:
+            speak = "Ajan aldı ve işledi." + _speak_guard_caveat(degraded, client)
         return Receipt(
             status="GREEN",
             phase=send.phase,
             accepted=True,
-            reason="",
-            speak="Ajan aldı ve işledi." + _speak_guard_caveat(degraded, client),
+            reason=send.reason if send.reason == "host_prompt_check_overridden" else "",
+            speak=speak,
             missing_guarantees=degraded,
             client_guarantees=client,
         )

@@ -180,6 +180,11 @@ class SendOutcome:
     revision_after: int | None = None
     delivery_ref: str | None = None
     reason: str = ""
+    #: Set when this one send was made under guarantees that differ from the
+    #: backend's usual answer. A receipt must describe THIS write, and a per-send
+    #: override that reported the backend's standing capabilities would be a lie
+    #: shaped exactly like the one the enforcement levels exist to prevent.
+    capabilities_override: "BackendCapabilities | None" = None
 
 
 @dataclass(frozen=True, slots=True)

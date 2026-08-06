@@ -33,6 +33,16 @@ from .receipt import build_receipt, canary_instruction, new_canary
 from .registry import BackendRegistry
 from .resume import speak_fidelity
 
+
+def _accepts_prompt_override(backend: object) -> bool:
+    """Whether this backend's `send` takes the override at all."""
+    import inspect
+
+    try:
+        return "override_host_prompt_check" in inspect.signature(backend.send).parameters
+    except (TypeError, ValueError):
+        return False
+
 DEFAULT_HOST = "127.0.0.1"
 # 8787 belongs to the launchd-managed mahmory-api; 8791 was also taken.
 DEFAULT_PORT = 8792
@@ -237,6 +247,7 @@ def pane_send(
     text: str,
     prove_acceptance: bool = True,
     timeout_seconds: float = 8.0,
+    override_host_prompt_check: bool = False,
 ) -> dict[str, object]:
     """Send text to a pane and return a receipt for what was actually proven.
 
@@ -270,6 +281,26 @@ def pane_send(
     `canary_timeout_pane_still` means nothing moved at all.
 
     Speak the returned `speak` value verbatim or more conservatively.
+    `override_host_prompt_check` exists for exactly one measured defect and must
+    not be used for anything else.
+
+    A Superset host counts an agent's own placeholder suggestion as staged input,
+    so `pane_send` to such a pane returns RED `rejected_prompt_not_empty` forever
+    and `pane_clear` cannot help — there is nothing in the prompt to clear. When
+    that happens the receipt says so, with reason
+    `host_says_occupied_screen_says_empty`.
+
+    **Only set this after the operator has heard that sentence and said to send
+    anyway, in words, for this pane.** Do not set it speculatively, do not set it
+    because a previous pane needed it, and do not set it on any other refusal. The
+    fact this turns on — whether that text is the agent's own suggestion or
+    something a person typed and walked away from — is not in any screen; it is in
+    the operator's head. Asking is the only way to read it.
+
+    The write still goes through the guarded host path with the same expected
+    revision and a client token, so a stale terminal is still refused by the host.
+    Only the prompt verdict moves to this side, and the receipt reports
+    `empty_prompt_check: client` for that send while the other two stay `host`.
     """
     try:
         backend = registry.resolve(target_id)
@@ -279,8 +310,23 @@ def pane_send(
     canary = new_canary() if prove_acceptance else None
     payload = text if canary is None else f"{text}\n\n{canary_instruction(canary)}"
     try:
+        send_kwargs: dict[str, object] = {}
+        if override_host_prompt_check:
+            # Only offered where it means something. A backend without the
+            # parameter would silently ignore it, and an ignored override that the
+            # operator was asked to authorise is worse than an unavailable one.
+            if not _accepts_prompt_override(backend):
+                return {
+                    "ok": False,
+                    "target_id": target_id,
+                    "error": (
+                        f"the {backend.namespace} backend has no host prompt check to "
+                        "override; its refusal came from this side"
+                    ),
+                }
+            send_kwargs["override_host_prompt_check"] = True
         outcome = backend.send(
-            target_id, payload, canary=canary, client_token=str(uuid4())
+            target_id, payload, canary=canary, client_token=str(uuid4()), **send_kwargs
         )
         acceptance = (
             await_acceptance_patiently(
@@ -292,7 +338,12 @@ def pane_send(
     except BackendError as error:
         return {"ok": False, "error": str(error), "target_id": target_id}
 
-    receipt = build_receipt(outcome, acceptance, backend.capabilities())
+    # A receipt describes THIS write. When one send ran under guarantees that differ
+    # from the backend's standing answer, reporting the standing answer would be a
+    # lie of exactly the shape the enforcement levels exist to prevent.
+    receipt = build_receipt(
+        outcome, acceptance, outcome.capabilities_override or backend.capabilities()
+    )
     return {"ok": True, "target_id": target_id, "runtime": outcome.runtime, **receipt.as_dict()}
 
 @mcp.tool
