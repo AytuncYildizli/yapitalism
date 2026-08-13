@@ -1,3 +1,5 @@
+
+
 <!-- mcp-name: io.github.AytuncYildizli/yapitalism -->
 <!-- The MCP Registry verifies PyPI package ownership by finding this
      string in the package description, which is this README. It must
@@ -117,8 +119,8 @@ yapitalism setup
 
 `setup` interviews the machine rather than printing "installed successfully": which backends are
 usable, which agent CLIs are on `PATH`, whether a Superset host is live and which build it is, and
-the guarantee table above filled in for you. It writes nothing except, if you say yes, the Superset
-manifest — and it names what is still missing with the exact command for each.
+the guarantee table above filled in for you. It writes nothing by default and names what is still
+missing with the exact command for each.
 
 Then talk to the voice app: *"list my panes"*, then *"send this to the Codex pane"*.
 
