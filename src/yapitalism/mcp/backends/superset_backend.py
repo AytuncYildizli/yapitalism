@@ -15,12 +15,13 @@ rather than the manifest's own.
 from __future__ import annotations
 
 import os
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ...adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
 from ...prompt_state import EMPTY, detect_prompt_state
 from .base import (
+    AGENT_RUNTIMES,
     CLIENT,
     HOST,
     NONE,
@@ -84,6 +85,20 @@ UNKNOWN_HOST = BackendCapabilities(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _AcceptanceContext:
+    """One send's proof context, kept only until that send's await consumes it.
+
+    Bound to the operation rather than to the backend. The target is carried so an
+    await can never be answered with a different pane's evidence, even if a caller
+    passes a token that belongs elsewhere.
+    """
+
+    target_id: str
+    baseline: object
+    submitted_text: str
+
+
 def resolve_manifest_path() -> Path:
     """Prefer the yapitalism-era manifest, accept one provisioned before it."""
     override = os.environ.get("YAPITALISM_SUPERSET_MANIFEST")
@@ -118,9 +133,10 @@ class SupersetBackend:
     def __init__(self, manifest_path: Path | str | None = None) -> None:
         self._manifest_path = Path(manifest_path) if manifest_path else resolve_manifest_path()
         self._adapter: SupersetAdapter | None = None
-        # await_canary needs the exact baseline the send was guarded by.
-        self._baseline: object | None = None
-        self._last_text: str | None = None
+        # One entry per in-flight send, keyed by its client token, consumed by that
+        # send's await. Replaces two singleton fields that any concurrent send
+        # overwrote.
+        self._contexts: dict[str, _AcceptanceContext] = {}
         self._workspace_of: dict[str, str] = {}
         self._adapters: dict[str, SupersetAdapter] = {}
 
@@ -305,6 +321,22 @@ class SupersetBackend:
         """
         adapter = self._adapter_for(target_id)
         try:
+            # BEFORE the write, not after. `dispatch` mutates the terminal, so a
+            # runtime check on its RESPONSE would be too late - the shell would
+            # already have run the text. tmux refuses up front; this path accepted
+            # an injected `runtime="shell"` as a successful send, which turns a
+            # misrouted voice turn into an executed command.
+            #
+            # listSessions is the host's own agent registry rather than a process
+            # scan, so unlike tmux it can be trusted before a write.
+            runtime = adapter.registry_runtime()
+            if runtime not in AGENT_RUNTIMES:
+                return SendOutcome(
+                    phase="rejected_not_an_agent",
+                    dispatched=False,
+                    runtime=runtime,
+                    reason=f"pane is running {runtime or 'something unrecognised'}",
+                )
             baseline = adapter.snapshot(max_lines=1000)
             if canary is not None:
                 adapter.validate_canary(
@@ -319,8 +351,31 @@ class SupersetBackend:
             )
         except (TrpcError, ValueError) as error:
             raise BackendError(str(error)) from None
-        self._baseline = baseline
-        self._last_text = text
+        if result.target_runtime not in AGENT_RUNTIMES:
+            # Defence in depth: the pre-flight said agent and the host now says
+            # otherwise, so the registry went stale in between. The write already
+            # happened and cannot be recalled; refusing to REPORT it as delivered is
+            # what is left, and it beats a receipt calling a shell write an
+            # instruction the agent received.
+            return SendOutcome(
+                phase="rejected_not_an_agent",
+                dispatched=False,
+                runtime=result.target_runtime,
+                reason="host reported a non-agent runtime after the write",
+            )
+        if result.dispatched:
+            # Only a write that actually landed leaves acceptance context, and it is
+            # keyed by the operation rather than stored on the backend.
+            #
+            # Both halves were bugs. The singleton fields meant a second send
+            # overwrote the first's proof context before the first awaited, so a
+            # concurrent A-send/B-send/A-await proved A's canary against B's
+            # evidence - FastMCP runs sync tools on a threadpool, so that is a real
+            # interleaving, not a theoretical one. And writing unconditionally meant
+            # a REFUSED send clobbered the context of a successful one.
+            self._contexts[client_token] = _AcceptanceContext(
+                target_id=target_id, baseline=baseline, submitted_text=text
+            )
         return SendOutcome(
             phase=result.phase,
             dispatched=result.dispatched,
@@ -362,21 +417,44 @@ class SupersetBackend:
         return phase
 
     def await_acceptance(
-        self, target_id: str, canary: str | None, *, timeout: float = 8.0
+        self,
+        target_id: str,
+        canary: str | None,
+        *,
+        timeout: float = 8.0,
+        client_token: str | None = None,
     ) -> AcceptanceOutcome:
+        """Prove acceptance for ONE send, named by its client token.
+
+        The token is how this await finds the baseline and submitted text of the
+        send it belongs to. Without it there is nothing to prove against, and
+        guessing "the most recent send" is what let a concurrent request answer
+        with another operation's evidence.
+        """
         if canary is None:
             return AcceptanceOutcome(False, 0, "no_canary")
         adapter = self._adapter_for(target_id)
-        baseline = self._baseline
-        if baseline is None:
-            raise BackendError("no baseline from a prior send in this process")
+        if client_token is None:
+            raise BackendError("acceptance needs the client token of the send it proves")
+        context = self._contexts.get(client_token)
+        if context is None:
+            raise BackendError("no acceptance context for this send in this process")
+        if context.target_id != target_id:
+            # A token belongs to one pane. Answering across panes would be the same
+            # class of mix-up the shared singleton produced.
+            raise BackendError("acceptance context belongs to a different pane")
+        baseline = context.baseline
         try:
             result = adapter.await_canary(
                 canary,
-                command_id=f"mcp-{canary[-8:]}",
+                # The full token, not the canary's last 8 characters. Two concurrent
+                # sends whose canaries happened to share a suffix collided on the
+                # host's own dedup - reintroducing the operation mix-up one layer
+                # down, at the boundary meant to be authoritative.
+                command_id=f"mcp-{client_token}",
                 baseline_revision=baseline.revision,
                 baseline_text=baseline.text,
-                submitted_text=self._last_text or "",
+                submitted_text=context.submitted_text,
                 timeout=timeout,
             )
         except (TrpcError, ValueError) as error:

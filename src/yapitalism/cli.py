@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import uuid
 from pathlib import Path
 from typing import Any
@@ -362,6 +363,22 @@ def superset_send(args: argparse.Namespace) -> int:
             client_token=command_id,
             confirm=False,
         )
+        # Evidence FIRST, authorization second. Reversed, a crash or a failed append
+        # between the two left a live claim that could authorize a confirmed mutation
+        # while the dry run it rests on was never durably recorded - authorization
+        # outliving its own evidence, in the component whose whole job is that the
+        # evidence is authoritative. This is write-ahead logging, and the codebase
+        # already applies the discipline to its one-shot POST.
+        try:
+            ledger.append(dispatched.to_evidence(command_id))
+        except (ValueError, PermissionError, OSError):
+            print(
+                json.dumps(
+                    {"command_id": command_id, "dispatched": False, "reason": "dry_run_evidence_unrecorded"},
+                    sort_keys=True,
+                )
+            )
+            return 2
         try:
             claims.issue(
                 client_token=command_id,
@@ -378,7 +395,6 @@ def superset_send(args: argparse.Namespace) -> int:
                 )
             )
             return 2
-        ledger.append(dispatched.to_evidence(command_id))
         print(
             json.dumps(
                 {
@@ -581,6 +597,21 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # The MCP Registry resolves this package to its same-named console script and
+    # passes `--stdio`. That script is this CLI, and the MCP server is the separate
+    # `yapitalism-mcp` entry point - so every registry-driven client died on an
+    # argparse error before it could send `initialize`. The product IS the MCP
+    # server, and its listing could not start it.
+    #
+    # A shim rather than a renamed entry point: the published server.json already
+    # names this script, and changing the package's argv shape would strand the
+    # listing that is live right now. `yapitalism-mcp` keeps working unchanged.
+    raw = sys.argv[1:] if argv is None else argv
+    if "--stdio" in raw:
+        from .mcp.server import main as mcp_main
+
+        return mcp_main(list(raw))
+
     args = build_parser().parse_args(argv)
     if args.command == "doctor":
         return doctor(args.fixture)
