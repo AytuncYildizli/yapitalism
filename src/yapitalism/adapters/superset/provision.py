@@ -239,8 +239,16 @@ class Binding:
     terminal_count: int
 
 
-def probe_binding(record: HostRecord, timeout: float = 5.0) -> Binding:
+def probe_binding(
+    record: HostRecord,
+    timeout: float = 5.0,
+    previous: tuple[str, str] | None = None,
+) -> Binding:
     """Prove the credentials work and pick a default terminal.
+
+    `previous` is the (workspace_id, terminal_id) of a manifest being refreshed. It
+    is used only if no agent terminal is running, so that a rotated token can be
+    repaired without first starting an agent.
 
     This is the step that turns "a file exists" into "the host answers us". A
     manifest written without it would look fine and fail on first use, which is
@@ -296,6 +304,28 @@ def probe_binding(record: HostRecord, timeout: float = 5.0) -> Binding:
                     runtime=str(runtime),
                     terminal_count=len(sessions),
                 )
+    if previous is not None:
+        # Refreshing an existing manifest. The credentials were just proved by the
+        # calls above, which is the whole reason a refresh is being run — the host
+        # rotated its token. Demanding a live agent terminal on top of that makes the
+        # fix unavailable exactly when it is needed: a stale token with no agent
+        # running would be unrepairable, and `setup` would be recommending a command
+        # that cannot succeed.
+        #
+        # The old binding is only a DEFAULT target; every read and send rebinds to
+        # whatever pane it was asked for, so carrying it forward costs nothing.
+        for workspace in workspaces:
+            workspace_id = workspace.get("id")
+            if workspace_id != previous[0]:
+                continue
+            name = workspace.get("name")
+            return Binding(
+                workspace_id=previous[0],
+                workspace_name=name if isinstance(name, str) else previous[0],
+                terminal_id=previous[1],
+                runtime="unknown",
+                terminal_count=0,
+            )
     raise ProvisionError(
         "the host answered but no terminal is running codex, claude or kimi. "
         "Start an agent in a Superset terminal, then run this again"
