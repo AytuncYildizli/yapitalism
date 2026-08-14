@@ -26,7 +26,7 @@ from uuid import uuid4
 
 from fastmcp import FastMCP
 
-from .backends.base import AcceptanceOutcome, BackendError
+from .backends.base import AGENT_RUNTIMES, AcceptanceOutcome, BackendError
 from .backends.superset_backend import SupersetBackend
 from .backends.tmux_backend import TmuxBackend
 from .receipt import build_receipt, canary_instruction, new_canary
@@ -127,6 +127,7 @@ def await_acceptance_patiently(
     *,
     idle_timeout: float = IDLE_TIMEOUT_SECONDS,
     max_wait: float = MAX_WAIT_SECONDS,
+    client_token: str | None = None,
 ) -> AcceptanceOutcome:
     """Wait for proof for as long as the agent looks alive.
 
@@ -163,7 +164,13 @@ def await_acceptance_patiently(
         if remaining <= 0:
             break
         outcome = backend.await_acceptance(
-            target_id, canary, timeout=min(remaining, 2.0)
+            target_id,
+            canary,
+            timeout=min(remaining, 2.0),
+            # Names WHICH send this proves. A backend that keyed proof on "the most
+            # recent send" answered a concurrent request with another operation's
+            # evidence.
+            client_token=client_token,
         )
         attempts += outcome.attempts
         if outcome.observed:
@@ -237,6 +244,7 @@ def pane_send(
     text: str,
     prove_acceptance: bool = True,
     timeout_seconds: float = 8.0,
+    client_token: str = "",
 ) -> dict[str, object]:
     """Send text to a pane and return a receipt for what was actually proven.
 
@@ -270,6 +278,12 @@ def pane_send(
     `canary_timeout_pane_still` means nothing moved at all.
 
     Speak the returned `speak` value verbatim or more conservatively.
+    `client_token` is how a RETRY stays one delivery instead of two. Leave it empty
+    and each call mints a fresh one, which is right for a new instruction and wrong
+    for re-sending after an ambiguous failure: a guarded host deduplicates on this
+    token, and a fresh token per attempt means it never sees the repeat. If a
+    previous `pane_send` came back with an error or an unproven YELLOW and the same
+    message is being sent again, pass the SAME token as the first attempt.
     """
     try:
         backend = registry.resolve(target_id)
@@ -278,19 +292,33 @@ def pane_send(
 
     canary = new_canary() if prove_acceptance else None
     payload = text if canary is None else f"{text}\n\n{canary_instruction(canary)}"
+    token = client_token or str(uuid4())
+    # Only the SEND is allowed to fail into a bare error, because only before the
+    # send is "nothing happened" true.
     try:
-        outcome = backend.send(
-            target_id, payload, canary=canary, client_token=str(uuid4())
-        )
-        acceptance = (
-            await_acceptance_patiently(
-                backend, target_id, canary, idle_timeout=timeout_seconds
-            )
-            if outcome.dispatched
-            else AcceptanceOutcome(False, 0, "not_dispatched")
-        )
+        outcome = backend.send(target_id, payload, canary=canary, client_token=token)
     except BackendError as error:
         return {"ok": False, "error": str(error), "target_id": target_id}
+
+    if not outcome.dispatched:
+        acceptance = AcceptanceOutcome(False, 0, "not_dispatched")
+    else:
+        try:
+            acceptance = await_acceptance_patiently(
+                backend,
+                target_id,
+                canary,
+                idle_timeout=timeout_seconds,
+                client_token=token,
+            )
+        except BackendError as error:
+            # The write is already in the terminal. Returning a bare error here threw
+            # that away and looked identical to "nothing happened", which invites a
+            # retry - and on tmux, which deduplicates nothing, a retry is a second
+            # write. An unobserved delivery is exactly what YELLOW is for.
+            acceptance = AcceptanceOutcome(
+                False, 0, f"acceptance_observation_failed: {error}"
+            )
 
     receipt = build_receipt(outcome, acceptance, backend.capabilities())
     return {"ok": True, "target_id": target_id, "runtime": outcome.runtime, **receipt.as_dict()}
@@ -416,6 +444,18 @@ def panes_resume(
     return {"ok": True, "speak": speak, **outcome.as_dict()}
 
 
+def _pane_runtime(backend: object, target_id: str) -> str:
+    """What the backend says is running in one pane, right now.
+
+    Read from a fresh listing rather than a cache: the whole point of the check is
+    that a pane can stop being an agent between one call and the next.
+    """
+    for pane in backend.list_panes():
+        if pane.target_id == target_id:
+            return pane.runtime
+    raise BackendError(f"pane {target_id} is not listed by its backend")
+
+
 @mcp.tool
 def pane_clear(target_id: str, action: str = "escape") -> dict[str, object]:
     """Try to unstick a pane whose prompt is blocking a send.
@@ -461,6 +501,25 @@ def pane_clear(target_id: str, action: str = "escape") -> dict[str, object]:
                 "exposes no procedure for it. Clear it at the machine."
             ),
             "target_id": target_id,
+        }
+
+    # Same boundary as `pane_send`, and it was missing here. Clearing writes control
+    # bytes into a terminal; on a pane that is running a plain shell those are keys a
+    # shell interprets. Fixing the send path alone left the other voice-reachable
+    # mutation ungated, which is how a "fixed" boundary keeps leaking.
+    try:
+        runtime = _pane_runtime(backend, target_id)
+    except BackendError as error:
+        return {"ok": False, "error": str(error), "target_id": target_id}
+    if runtime not in AGENT_RUNTIMES:
+        return {
+            "ok": False,
+            "target_id": target_id,
+            "runtime": runtime,
+            "error": (
+                f"that pane is running {runtime or 'something unrecognised'}, not an "
+                "agent; clearing it would send control keys to a shell"
+            ),
         }
 
     try:

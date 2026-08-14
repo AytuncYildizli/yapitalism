@@ -22,7 +22,9 @@ registry because a pane can change what it runs between the check and the write.
 
 from __future__ import annotations
 
+import threading
 import time
+from collections import defaultdict
 
 from ...adapters.superset import _canary_could_appear, _structured_canary_observed
 from ...prompt_state import EMPTY, HAS_TEXT, detect_prompt_state
@@ -112,6 +114,21 @@ class TmuxBackend:
         #: Tokens whose write reached the pane. tmux cannot deduplicate for us.
         #: Bounded — this server runs for weeks under launchd.
         self._landed_tokens = BoundedTokens()
+        #: One lock per pane, held across the whole send transaction.
+        #:
+        #: A tmux write is capture -> guards -> type -> Enter -> capture, and every
+        #: step is a separate subprocess. FastMCP runs sync tools on a threadpool, so
+        #: two concurrent sends to one pane interleaved as type-A, type-B, Enter,
+        #: Enter: both payloads merged into one prompt, one submit, and BOTH receipts
+        #: claiming dispatched. The canaries merge too, so the proof is misattributed
+        #: as well as the delivery.
+        #:
+        #: Keyed per pane rather than global so different panes still run in
+        #: parallel - the race is within a pane, and a global lock would serialise a
+        #: fleet for no safety gain.
+        self._pane_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
+        #: Guards creation of the per-pane locks themselves.
+        self._locks_guard = threading.Lock()
         #: Tokens burned by a write that has not been confirmed to complete.
         self._ambiguous_tokens: set[str] = set()
 
@@ -316,114 +333,119 @@ class TmuxBackend:
         is accepted for interface parity and deliberately unused: pretending to
         deduplicate would be worse than declaring the gap in capabilities.
         """
-        try:
-            before = capture_pane(target_id, 1000)
+        # Held across the ENTIRE transaction - capture, guards, type, Enter, capture.
+        # Anything less leaves the window the interleaving used: two sends could both
+        # pass the guards, then type-A/type-B/Enter/Enter into one merged prompt with
+        # both receipts claiming delivery.
+        with self._pane_lock(target_id):
+            try:
+                before = capture_pane(target_id, 1000)
 
-            # Refuse rather than type into a dialog. This is not only a receipt
-            # concern: a blocking prompt is usually a menu, so text followed by
-            # Enter can SELECT one of its options. On the first live run the
-            # pane was sitting on "1. Yes, I trust this folder / 2. No, exit"
-            # and the send went straight into it.
-            #
-            # tmux cannot enforce an empty prompt, which is why
-            # empty_prompt_check is declared False - but declining a state we
-            # can positively recognise is strictly better than writing blind.
-            blocking = detect_blocking_prompt(before)
-            if blocking:
-                return SendOutcome(
-                    phase=f"rejected_{blocking}",
-                    dispatched=False,
-                    runtime=self._runtime_of(target_id),
-                    reason=blocking,
-                )
+                # Refuse rather than type into a dialog. This is not only a receipt
+                # concern: a blocking prompt is usually a menu, so text followed by
+                # Enter can SELECT one of its options. On the first live run the
+                # pane was sitting on "1. Yes, I trust this folder / 2. No, exit"
+                # and the send went straight into it.
+                #
+                # tmux cannot enforce an empty prompt, which is why
+                # empty_prompt_check is declared False - but declining a state we
+                # can positively recognise is strictly better than writing blind.
+                blocking = detect_blocking_prompt(before)
+                if blocking:
+                    return SendOutcome(
+                        phase=f"rejected_{blocking}",
+                        dispatched=False,
+                        runtime=self._runtime_of(target_id),
+                        reason=blocking,
+                    )
 
-            runtime = self._runtime_of(target_id)
-            # Nothing enforced this before, and it should have from the start.
-            # `classify_tree` exists because "a pane that used to run an agent and
-            # now runs a plain shell must never be treated as an agent target, or a
-            # spoken instruction becomes an arbitrary shell command" — and then the
-            # send path never checked. Typing into a shell and pressing Enter IS
-            # running a command, reachable by voice.
-            #
-            # The prompt check below happens to refuse these too, because an
-            # unknown runtime has no marker to judge, but relying on that would
-            # leave a security boundary as a side effect of a heuristic.
-            if runtime not in AGENT_RUNTIMES:
-                return SendOutcome(
-                    phase="rejected_not_an_agent",
-                    dispatched=False,
-                    runtime=runtime,
-                    reason=f"pane is running {runtime or 'something unrecognised'}",
-                )
+                runtime = self._runtime_of(target_id)
+                # Nothing enforced this before, and it should have from the start.
+                # `classify_tree` exists because "a pane that used to run an agent and
+                # now runs a plain shell must never be treated as an agent target, or a
+                # spoken instruction becomes an arbitrary shell command" — and then the
+                # send path never checked. Typing into a shell and pressing Enter IS
+                # running a command, reachable by voice.
+                #
+                # The prompt check below happens to refuse these too, because an
+                # unknown runtime has no marker to judge, but relying on that would
+                # leave a security boundary as a side effect of a heuristic.
+                if runtime not in AGENT_RUNTIMES:
+                    return SendOutcome(
+                        phase="rejected_not_an_agent",
+                        dispatched=False,
+                        runtime=runtime,
+                        reason=f"pane is running {runtime or 'something unrecognised'}",
+                    )
 
-            # The dialog table above recognises seven known screens. This catches
-            # the case it cannot: a prompt simply holding text. send-keys does not
-            # replace that text, it appends to it, and the Enter submits the merge
-            # — so a half-typed thought and a voice instruction arrive as one
-            # corrupted message. Refusing on anything short of a confident EMPTY
-            # is the same rule the guarded Superset host applies, and `pane_clear`
-            # is the way out of both.
-            prompt_state = detect_prompt_state(before, runtime)
-            if prompt_state != EMPTY:
-                return SendOutcome(
-                    phase=(
-                        "rejected_prompt_not_empty"
-                        if prompt_state == HAS_TEXT
-                        else "rejected_prompt_unreadable"
-                    ),
-                    dispatched=False,
-                    runtime=runtime,
-                    reason=prompt_state,
-                )
+                # The dialog table above recognises seven known screens. This catches
+                # the case it cannot: a prompt simply holding text. send-keys does not
+                # replace that text, it appends to it, and the Enter submits the merge
+                # — so a half-typed thought and a voice instruction arrive as one
+                # corrupted message. Refusing on anything short of a confident EMPTY
+                # is the same rule the guarded Superset host applies, and `pane_clear`
+                # is the way out of both.
+                prompt_state = detect_prompt_state(before, runtime)
+                if prompt_state != EMPTY:
+                    return SendOutcome(
+                        phase=(
+                            "rejected_prompt_not_empty"
+                            if prompt_state == HAS_TEXT
+                            else "rejected_prompt_unreadable"
+                        ),
+                        dispatched=False,
+                        runtime=runtime,
+                        reason=prompt_state,
+                    )
 
-            # Real dedup, not parity. The repeats this protects against are this
-            # process's own — a retried voice turn, a client resend — so tracking
-            # them here is fully effective rather than approximate.
-            if client_token in self._landed_tokens:
-                # A token burned by a write that failed ambiguously is not a
-                # duplicate: nothing may have arrived. Calling it one would claim a
-                # delivery that never happened.
-                ambiguous = client_token in self._ambiguous_tokens
-                return SendOutcome(
-                    phase=(
-                        "duplicate_after_ambiguous_write"
-                        if ambiguous
-                        else "duplicate_ignored"
-                    ),
-                    dispatched=False,
-                    runtime=runtime,
-                    reason=(
-                        "client_token was burned by a write that failed ambiguously"
-                        if ambiguous
-                        else "client_token already used for a write that landed"
-                    ),
-                )
+                # Real dedup, not parity. The repeats this protects against are this
+                # process's own — a retried voice turn, a client resend — so tracking
+                # them here is fully effective rather than approximate.
+                if client_token in self._landed_tokens:
+                    # A token burned by a write that failed ambiguously is not a
+                    # duplicate: nothing may have arrived. Calling it one would claim a
+                    # delivery that never happened.
+                    ambiguous = client_token in self._ambiguous_tokens
+                    return SendOutcome(
+                        phase=(
+                            "duplicate_after_ambiguous_write"
+                            if ambiguous
+                            else "duplicate_ignored"
+                        ),
+                        dispatched=False,
+                        runtime=runtime,
+                        reason=(
+                            "client_token was burned by a write that failed ambiguously"
+                            if ambiguous
+                            else "client_token already used for a write that landed"
+                        ),
+                    )
 
-            revision_before = self._revisions.observe(target_id, before)
-            if canary is not None:
-                if _canary_could_appear(before, canary):
-                    raise BackendError("canary was already present in the pane")
-                if _canary_could_appear(text, canary):
-                    raise BackendError("canary must not occur in the submitted text")
-            # Burned before the write: if send-keys half-succeeds the text is
-            # already in the pane and a retry under the same token must still be
-            # refused. Marked ambiguous until both calls return, so the refusal can
-            # say whether anything is known to have landed.
-            self._landed_tokens.add(client_token)
-            self._ambiguous_tokens.add(client_token)
-            send_literal(target_id, text)
-            send_enter(target_id)
-            self._ambiguous_tokens.discard(client_token)
-            after = capture_pane(target_id, 1000)
-        except TmuxError as error:
-            raise BackendError(str(error)) from None
-        return SendOutcome(
-            phase="injected",
-            dispatched=True,
-            runtime=self._runtime_of(target_id),
-            revision_before=revision_before,
-            revision_after=self._revisions.observe(target_id, after),
-        )
+                revision_before = self._revisions.observe(target_id, before)
+                if canary is not None:
+                    if _canary_could_appear(before, canary):
+                        raise BackendError("canary was already present in the pane")
+                    if _canary_could_appear(text, canary):
+                        raise BackendError("canary must not occur in the submitted text")
+                # Burned before the write: if send-keys half-succeeds the text is
+                # already in the pane and a retry under the same token must still be
+                # refused. Marked ambiguous until both calls return, so the refusal can
+                # say whether anything is known to have landed.
+                self._landed_tokens.add(client_token)
+                self._ambiguous_tokens.add(client_token)
+                send_literal(target_id, text)
+                send_enter(target_id)
+                self._ambiguous_tokens.discard(client_token)
+                after = capture_pane(target_id, 1000)
+            except TmuxError as error:
+                raise BackendError(str(error)) from None
+            return SendOutcome(
+                phase="injected",
+                dispatched=True,
+                runtime=self._runtime_of(target_id),
+                revision_before=revision_before,
+                revision_after=self._revisions.observe(target_id, after),
+            )
 
     def await_acceptance(
         self, target_id: str, canary: str | None, *, timeout: float = 8.0
@@ -443,6 +465,15 @@ class TmuxBackend:
                 return AcceptanceOutcome(True, attempts)
             time.sleep(min(0.3, max(0.0, deadline - time.monotonic())))
         return AcceptanceOutcome(False, attempts, "canary_timeout")
+
+    def _pane_lock(self, target_id: str) -> threading.Lock:
+        """The lock for one pane, created once.
+
+        `defaultdict` is not itself atomic across threads under free-threading, so
+        the creation is guarded. Cheap: taken once per pane, not per send.
+        """
+        with self._locks_guard:
+            return self._pane_locks[target_id]
 
     def _runtime_of(self, target_id: str) -> str:
         for pane in self.list_panes():

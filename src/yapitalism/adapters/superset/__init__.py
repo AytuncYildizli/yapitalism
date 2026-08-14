@@ -879,6 +879,14 @@ class SupersetAdapter:
                 return snapshot, True
         return snapshot, False
 
+    def registry_runtime(self) -> str:
+        """Public alias: the host's own runtime for the bound terminal.
+
+        Callers outside this module need it to refuse a write BEFORE it happens,
+        which is why it stopped being private.
+        """
+        return self._runtime_from_registry()
+
     def _runtime_from_registry(self) -> str:
         """The host's own runtime for this terminal, or "unknown".
 
