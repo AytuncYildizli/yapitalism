@@ -376,6 +376,20 @@ def pane_send(
     receipt = build_receipt(outcome, acceptance, backend.capabilities())
     return {"ok": True, "target_id": target_id, "runtime": outcome.runtime, **receipt.as_dict()}
 
+def _spoken_pane_name(cwd: str, runtime: str) -> str:
+    """How a person refers to a pane out loud.
+
+    Never the target id. `tmux:%6` reads aloud as "tmux percent six", and nobody
+    says "pane" either — they say "the codex in relayproof". `panes_list`'s docstring
+    already tells the model to name panes by project or folder; these sentences were
+    contradicting it in the one place the operator actually hears.
+
+    The id stays in the payload, where the model needs it to make the next call.
+    """
+    folder = cwd.rstrip("/").rsplit("/", 1)[-1] if cwd else ""
+    return f"{folder} klasorundeki {runtime}" if folder else runtime
+
+
 @mcp.tool
 def panes_create(
     runtime: str,
@@ -424,14 +438,14 @@ def panes_create(
         speak = (
             f"{runtime} basladi ama bir onay ekraninda bekliyor "
             f"({outcome.blocked_on}); is gondermeden once orayi gecmek gerekiyor. "
-            f"Pane {outcome.target_id}"
+            f"{_spoken_pane_name(cwd, runtime)}."
         )
     elif outcome.runtime_confirmed:
-        speak = f"{outcome.runtime_observed} calisiyor, pane {outcome.target_id}"
+        speak = f"{_spoken_pane_name(cwd, outcome.runtime_observed)} hazir."
     else:
         speak = (
             f"Oturum acildi ama {runtime} calistigi dogrulanamadi; "
-            f"pane {outcome.target_id} bos olabilir"
+            f"{_spoken_pane_name(cwd, runtime)} bos olabilir, temizlenmesi gerekebilir."
         )
     return {"ok": True, "speak": speak, **outcome.as_dict()}
 
@@ -483,17 +497,17 @@ def panes_resume(
     fidelity_line = speak_fidelity(outcome.fidelity)
     if not outcome.runtime_confirmed:
         speak = (
-            f"Oturum olusturuldu ama {runtime} icinde calismiyor; pane "
-            f"{outcome.target_id}. Temizlenmesi gerekiyor."
+            f"Oturum olusturuldu ama {runtime} icinde calismiyor: "
+            f"{_spoken_pane_name(cwd, runtime)}. Temizlenmesi gerekiyor."
         )
     elif outcome.blocked_on:
         speak = (
             f"{runtime} geri geldi ({fidelity_line}) ama bir ekranda bekliyor "
             f"({outcome.blocked_on}); is gondermeden once orayi gecmek gerekiyor. "
-            f"Pane {outcome.target_id}"
+            f"{_spoken_pane_name(cwd, runtime)}."
         )
     else:
-        speak = f"{runtime} geri geldi: {fidelity_line}. Pane {outcome.target_id}"
+        speak = f"{_spoken_pane_name(cwd, runtime)} geri geldi: {fidelity_line}."
     return {"ok": True, "speak": speak, **outcome.as_dict()}
 
 
