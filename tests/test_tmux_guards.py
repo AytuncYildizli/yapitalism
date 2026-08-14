@@ -172,12 +172,12 @@ class TmuxSendGuardTests(unittest.TestCase):
         self.assertFalse(outcome.dispatched)
         self.assertNotIn("did it arrive?", self.screen())
 
-    def test_a_recognised_dialog_still_wins_over_the_prompt_check(self) -> None:
-        """Order matters: the dialog table is more specific than "has text".
+    def test_a_dialog_is_recognised_when_it_owns_the_input_line(self) -> None:
+        """A dialog REPLACES the composer, so it reads as text, and the table names it.
 
-        A trust prompt reported as `rejected_prompt_not_empty` would send the
-        operator to `pane_clear` instead of telling them a human decision is
-        waiting.
+        The naming matters: `rejected_trust_prompt` tells the operator a human
+        decision is waiting, while `rejected_prompt_not_empty` sends them to
+        `pane_clear`, which cannot answer a dialog.
         """
         self.as_codex()
         send_literal(self.target, "Do you trust the contents of this directory?")
@@ -185,6 +185,39 @@ class TmuxSendGuardTests(unittest.TestCase):
             self.target, "run the tests", canary=None, client_token="trust-1"
         )
         self.assertEqual(outcome.phase, "rejected_trust_prompt")
+
+    def test_a_dialog_scrolled_off_the_screen_no_longer_blocks(self) -> None:
+        """The bug that made the whole tmux path unusable.
+
+        `send` captures 1000 lines for revision tracking, and the dialog table used
+        to match anywhere in them — so a pane that had ever shown a trust prompt was
+        refused for the rest of its life, and `pane_clear` could not help because the
+        text sat in scrollback rather than in the prompt. Every pane `panes_create`
+        makes shows one, so create-then-send never worked.
+
+        Asserted on the pure function rather than through a `cat` pane: the rule is
+        about which region of a capture is "now", and a fixture that has to reproduce
+        a TUI's redraw to express that tests the fixture.
+        """
+        from yapitalism.mcp.backends.tmux_backend import detect_blocking_prompt
+
+        dialog = "Do you trust the contents of this directory?"
+        scrolled = dialog + "\n" + "\n".join(f"output {i}" for i in range(60))
+        self.assertEqual(detect_blocking_prompt(scrolled), "")
+        # Still on screen, still blocking.
+        self.assertEqual(detect_blocking_prompt(dialog + "\noutput"), "trust_prompt")
+
+    def test_the_dialog_window_survives_a_pane_padded_with_blank_rows(self) -> None:
+        """A capture is padded with the pane's empty rows.
+
+        In a pane whose content sits at the top, a tail window that counts raw lines
+        lands entirely in that padding and sees nothing — so the check would silently
+        stop working on exactly the panes it was written for.
+        """
+        from yapitalism.mcp.backends.tmux_backend import detect_blocking_prompt
+
+        padded = "Do you trust the contents of this directory?" + "\n" * 200
+        self.assertEqual(detect_blocking_prompt(padded), "trust_prompt")
 
 
 if __name__ == "__main__":  # pragma: no cover

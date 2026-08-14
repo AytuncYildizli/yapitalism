@@ -361,13 +361,16 @@ def pane_send(
                 idle_timeout=timeout_seconds,
                 client_token=token,
             )
-        except BackendError as error:
-            # The write is already in the terminal. Returning a bare error here threw
-            # that away and looked identical to "nothing happened", which invites a
-            # retry - and on tmux, which deduplicates nothing, a retry is a second
-            # write. An unobserved delivery is exactly what YELLOW is for.
+        except Exception as error:
+            # Deliberately every exception, not just BackendError. The write is
+            # already in the terminal; what failed is watching it. A TypeError from a
+            # backend whose signature drifted lost a delivered message this way -
+            # crashed after the send, returned a generic tool error, and the operator
+            # could not tell it from "nothing happened". Whatever the cause, an
+            # unobserved delivery is exactly what YELLOW is for, and the evidence
+            # that the write landed must survive the thing that failed to watch it.
             acceptance = AcceptanceOutcome(
-                False, 0, f"acceptance_observation_failed: {error}"
+                False, 0, f"acceptance_observation_failed: {type(error).__name__}: {error}"
             )
 
     receipt = build_receipt(outcome, acceptance, backend.capabilities())

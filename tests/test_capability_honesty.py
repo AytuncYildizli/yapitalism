@@ -313,23 +313,26 @@ class StockHostDispatchTests(unittest.TestCase):
 class PromptDetectorSafetyTests(unittest.TestCase):
     """The two corruption paths a council review found in this detector."""
 
-    def test_a_hint_below_the_composer_does_not_hide_typed_text(self) -> None:
-        """The bug: one marker line used to decide the whole verdict.
+    def test_the_live_prompt_is_the_last_marker_line(self) -> None:
+        """Codex echoes each submitted prompt with the same marker.
 
-        This function does not identify the editable buffer, only lines that start
-        like one. If a runtime draws its hint BELOW the composer, the bottom-most
-        line is the hint, the typed text above is never examined, and the verdict is
-        EMPTY. The send then appends to somebody's sentence and submits the merge —
-        and the merged line still contains the canary, so the receipt comes back
-        GREEN. The error certifies itself.
+        Measured on a real pane: the instruction just sent sits ABOVE an empty
+        composer. Judging every marker line and letting text win — which an earlier
+        version did, to cover a hint-below-composer case that was reasoned about but
+        never observed — refused every pane that had ever been sent to.
         """
-        from yapitalism.prompt_state import HAS_TEXT, detect_prompt_state
+        from yapitalism.prompt_state import EMPTY, HAS_TEXT, detect_prompt_state
 
-        below = "output\n\u203a half a typed thought\n\u203a Use /skills to list available skills"
-        self.assertEqual(detect_prompt_state(below, "codex"), HAS_TEXT)
-        # And the other order, which the old code happened to get right.
-        above = "output\n\u203a Use /skills to list available skills\n\u203a half a typed thought"
-        self.assertEqual(detect_prompt_state(above, "codex"), HAS_TEXT)
+        echoed = (
+            "\u203a Reply with exactly the word READY\n"
+            "\u2022 READY\n"
+            "\u203a Use /skills to list available skills"
+        )
+        self.assertEqual(detect_prompt_state(echoed, "codex"), EMPTY)
+
+        # And real staged text at the bottom still reads as text.
+        staged = "\u203a an older instruction\n\u2022 done\n\u203a half a typed thought"
+        self.assertEqual(detect_prompt_state(staged, "codex"), HAS_TEXT)
 
     def test_a_placeholder_a_human_could_type_is_not_listed(self) -> None:
         """Admissibility: an entry needs a token a person would not type.

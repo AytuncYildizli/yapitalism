@@ -76,9 +76,25 @@ _BLOCKING_PROMPTS: tuple[tuple[str, str], ...] = (
 _BLOCK_SETTLE_SECONDS = 3.0
 
 
+#: How far back a dialog may be recognised. A dialog occupies the screen NOW; text
+#: further back is history.
+_DIALOG_TAIL_LINES = 40
+
+
 def detect_blocking_prompt(pane_text: str) -> str:
-    """Label a known blocking prompt, or "" when none is recognised."""
-    haystack = pane_text.lower()
+    """Label a known blocking prompt, or "" when none is recognised.
+
+    Scoped to the recent screen. `send` captures 1000 lines for revision tracking,
+    and matching a phrase anywhere in that made every dialog permanent: a pane that
+    ever showed "Do you trust this folder" was refused forever, and `pane_clear`
+    could not help because the text sat in scrollback rather than in the prompt.
+    Since `panes_create` produces exactly such a pane, the create-then-send flow —
+    the whole tmux path — was unusable.
+    """
+    # rstrip first: a capture is padded with the pane's empty rows, and in a pane
+    # whose content sits at the top the tail window would land entirely in that
+    # padding and see nothing. `detect_prompt_state` strips for the same reason.
+    haystack = "\n".join(pane_text.rstrip().splitlines()[-_DIALOG_TAIL_LINES:]).lower()
     for needle, label in _BLOCKING_PROMPTS:
         if needle in haystack:
             return label
@@ -350,7 +366,13 @@ class TmuxBackend:
                 # tmux cannot enforce an empty prompt, which is why
                 # empty_prompt_check is declared False - but declining a state we
                 # can positively recognise is strictly better than writing blind.
-                blocking = detect_blocking_prompt(before)
+                # The prompt state is the stronger signal, so it is consulted
+                # first. A dialog REPLACES the input line; if the input line is
+                # present and EMPTY, the agent is accepting input and any dialog
+                # phrase still on screen is a leftover. Keyword recognition then
+                # only decides how to NAME a refusal, never whether one happens.
+                prompt_state = detect_prompt_state(before, self._runtime_of(target_id))
+                blocking = detect_blocking_prompt(before) if prompt_state != EMPTY else ""
                 if blocking:
                     return SendOutcome(
                         phase=f"rejected_{blocking}",
@@ -385,7 +407,6 @@ class TmuxBackend:
                 # corrupted message. Refusing on anything short of a confident EMPTY
                 # is the same rule the guarded Superset host applies, and `pane_clear`
                 # is the way out of both.
-                prompt_state = detect_prompt_state(before, runtime)
                 if prompt_state != EMPTY:
                     return SendOutcome(
                         phase=(
@@ -448,8 +469,22 @@ class TmuxBackend:
             )
 
     def await_acceptance(
-        self, target_id: str, canary: str | None, *, timeout: float = 8.0
+        self,
+        target_id: str,
+        canary: str | None,
+        *,
+        timeout: float = 8.0,
+        client_token: str | None = None,
     ) -> AcceptanceOutcome:
+        """Watch this pane for the canary.
+
+        `client_token` names which send is being proven. tmux keeps no per-send
+        context - the canary is unique and the pane is the target, so there is
+        nothing here to look up - but the parameter is part of the backend contract
+        and omitting it broke every tmux send the moment the caller started passing
+        it. Accepting and ignoring it is the honest shape: the interface is uniform,
+        and no proof is invented from it.
+        """
         if canary is None:
             # Never testable, which is not the same as failed.
             return AcceptanceOutcome(False, 0, "no_canary")
