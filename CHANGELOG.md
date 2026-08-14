@@ -6,6 +6,67 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-14
+
+A security release. It closes a path by which a spoken instruction could reach a
+terminal running a plain shell, where text followed by Enter is an executed command.
+If you are on 0.1.x, upgrade.
+
+Found by [@efe-arv](https://github.com/efe-arv), who filed six issues with file:line
+evidence and working reproducers, and confirmed by an independent audit across five
+models. Three further defects surfaced during that audit.
+
+### Security
+
+- **A send could reach a non-agent pane on the Superset backend.** The runtime was
+  reported after the write rather than checked before it, so by the time the pane was
+  known to be a shell, the shell had run the text. The check now happens before the
+  write, against the host's own agent registry. A runtime that disagrees afterwards is
+  refused as delivered — the write cannot be recalled, but the receipt can decline to
+  call it an instruction the agent received. (#16)
+- **`pane_clear` had no runtime check at all.** Clearing writes control bytes, which a
+  shell interprets as keys. Fixing only the send path left the other voice-reachable
+  mutation open.
+
+### Fixed
+
+- **A receipt could prove the wrong send.** Acceptance context was two fields on the
+  backend, and the registry hands every call the same instance while FastMCP runs
+  sync tools on a threadpool — so a second send overwrote the first's proof before the
+  first awaited, and a refused send clobbered a successful one's. Context is now keyed
+  by client token, carries its target so a token cannot be answered across panes, and
+  is written only when the write landed. (#17)
+- **Concurrent tmux sends could merge.** Capture, guards, type, Enter and the closing
+  capture are separate subprocesses with no lock, so two sends interleaved into one
+  merged prompt and one submit, with both receipts claiming delivery and both canaries
+  misattributed. Locked per pane. (#18)
+- **`command_id` was derived from the canary's last 8 characters**, so two concurrent
+  sends sharing a suffix collided on the host's own deduplication. It uses the full
+  client token.
+- **A proven write could be reported as if nothing happened.** The send and its
+  observation shared one `try`, so an observation failure returned a bare error
+  indistinguishable from "not sent" — inviting a retry that, on a backend which
+  deduplicates nothing, writes twice. An observation failure is now an honest YELLOW
+  carrying the dispatch evidence. (#19)
+- **The MCP Registry listing could not start the server.** It resolves this package to
+  its same-named console script with `--stdio`, and that script was the CLI. Every
+  registry-driven client failed before `initialize`. (#20)
+- **A confirmation claim was published before its evidence reached the ledger**, so a
+  crash between the two left a live claim able to authorize a mutation whose dry run
+  was never durably recorded. (#21)
+
+### Added
+
+- `pane_send` accepts a `client_token`, so a retry after an ambiguous failure stays
+  one delivery instead of two. Without it each call minted a fresh token and a guarded
+  host's deduplication never saw the repeat.
+- `pane_send(override_host_prompt_check=True)` lets an operator overrule a host
+  empty-prompt verdict this side can prove wrong — a Superset host counts an agent's
+  own placeholder suggestion as staged input, which refuses those panes forever while
+  `pane_clear` cannot help. Never automatic, `codex` only, judged on the same snapshot
+  whose revision is sent, logged per occurrence, and spoken with the override leading.
+
+
 ## [0.1.2] - 2026-08-05
 
 ### Added
