@@ -576,7 +576,22 @@ class SupersetAdapter:
         expected_revision: int,
         client_token: str | None = None,
         confirm: bool = False,
+        require_empty_prompt: bool = True,
     ) -> DispatchResult:
+        """Send through the host's guarded path.
+
+        `require_empty_prompt` defaults True and should stay True. It exists as a
+        parameter because the host defaults it OFF and this client turns it on — so
+        the one measured case where the host's prompt detector is wrong is a dial
+        here, not a wall. Turning it down keeps `expectRevision` and `clientToken`,
+        which is the whole reason it is preferable to routing around the host with
+        `writeInput`: that would discard revision atomicity, token dedup, the host
+        delivery id, bracketed-paste framing and multi-line capability to work
+        around a detector.
+
+        The caller is responsible for having earned the right to turn it down. See
+        `SupersetBackend.send`.
+        """
         if not isinstance(text, str) or not text:
             raise ValueError("text must not be empty")
         try:
@@ -628,7 +643,7 @@ class SupersetAdapter:
             "text": text,
             "submit": True,
             "clientToken": token,
-            "requireEmptyPrompt": True,
+            "requireEmptyPrompt": require_empty_prompt,
             "allowRepeat": False,
             "expectRevision": expected_revision,
         }

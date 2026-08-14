@@ -14,8 +14,10 @@ rather than the manifest's own.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ...adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
@@ -75,6 +77,18 @@ CLIENT_GUARDED = BackendCapabilities(
     runtime_detection=_REGISTRY,
 )
 
+#: One send that deliberately did not ask the host for its empty-prompt check,
+#: because the host's detector was measured wrong on this exact case and the client
+#: holds falsifying evidence. Revision and token are untouched and still enforced by
+#: the host atomically — only the prompt verdict moved to this side, which is why
+#: this is preferable to routing around the host entirely.
+HOST_GUARDED_PROMPT_OVERRIDDEN = BackendCapabilities(
+    idempotent_dispatch=HOST,
+    optimistic_revision=HOST,
+    empty_prompt_check=CLIENT,
+    runtime_detection=_REGISTRY,
+)
+
 #: The host could not be asked. Claiming guards for a host that never answered
 #: would be the same overclaim by a quieter route.
 UNKNOWN_HOST = BackendCapabilities(
@@ -83,6 +97,13 @@ UNKNOWN_HOST = BackendCapabilities(
     empty_prompt_check=NONE,
     runtime_detection="unknown",
 )
+
+
+def _override_log_path() -> Path:
+    """Where every prompt-check override is recorded, one JSON line each."""
+    configured = os.environ.get("XDG_STATE_HOME")
+    root = Path(configured) if configured else Path.home() / ".local" / "state"
+    return root / "yapitalism" / "prompt-overrides.jsonl"
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,6 +332,7 @@ class SupersetBackend:
         *,
         canary: str | None,
         client_token: str,
+        override_host_prompt_check: bool = False,
     ) -> SendOutcome:
         """Confirmed send against the host's own guards.
 
@@ -318,6 +340,34 @@ class SupersetBackend:
         revision the baseline was read at, a stable client token, an
         empty-prompt requirement and a no-repeat flag, and it refuses the write
         itself if any of them no longer hold.
+
+        `override_host_prompt_check` addresses one measured defect and nothing
+        else. The host's detector counts an agent's own placeholder suggestion as
+        staged input, so `terminal.send` to such a pane is refused forever and
+        `pane_clear` cannot help — there is nothing in the prompt to clear.
+
+        When it is set, the refused send is re-issued with `requireEmptyPrompt`
+        false. That flag is ours to set; the host defaults it off. `expectRevision`
+        and `clientToken` are unchanged and still enforced by the host atomically,
+        so only the prompt verdict moves to this side — which is why this is
+        preferable to routing around the host with `writeInput`, and why the receipt
+        reports `empty_prompt_check: client` while the other two stay `host`.
+
+        The retry fires only when every one of these holds, as a hard whitelist:
+
+        - the host's refusal was exactly `rejected_prompt_not_empty`;
+        - this side judged the prompt EMPTY on **the same snapshot whose revision
+          was passed**, never a fresh re-read — a fresh revision would authorise a
+          write at a moment nobody judged, which is worse than the thing it fixes;
+        - the runtime is `codex`. `claude` and `kimi` have no observed placeholder
+          entries, so both detectors agree there and the refusal is real;
+        - the caller asked for it. This is never automatic: overruling a host
+          verdict is a decision, and the only party who knows whether that text is
+          the agent's suggestion or something a person typed is the person.
+
+        `rejected_revision_changed` from the retry terminates the attempt. It is
+        never retried again — that answer means the terminal moved, and re-reading
+        to get a fresher revision is precisely the mistake this docstring refuses.
         """
         adapter = self._adapter_for(target_id)
         try:
@@ -349,6 +399,21 @@ class SupersetBackend:
                 client_token=client_token,
                 confirm=True,
             )
+            overridden = False
+            if override_host_prompt_check and self._override_allowed(result, baseline.text):
+                self._record_override(target_id, result.target_runtime, baseline.revision)
+                result = adapter.dispatch(
+                    text,
+                    # The SAME revision the verdict was made against. Not a re-read.
+                    expected_revision=baseline.revision,
+                    # A fresh token: the host already saw and refused the first one,
+                    # and reusing it invites a duplicate verdict for a write that
+                    # never happened.
+                    client_token=f"{client_token}-prompt-override",
+                    confirm=True,
+                    require_empty_prompt=False,
+                )
+                overridden = True
         except (TrpcError, ValueError) as error:
             raise BackendError(str(error)) from None
         if result.target_runtime not in AGENT_RUNTIMES:
@@ -377,6 +442,7 @@ class SupersetBackend:
                 target_id=target_id, baseline=baseline, submitted_text=text
             )
         return SendOutcome(
+            capabilities_override=HOST_GUARDED_PROMPT_OVERRIDDEN if overridden else None,
             phase=result.phase,
             dispatched=result.dispatched,
             runtime=result.target_runtime,
@@ -389,9 +455,61 @@ class SupersetBackend:
             reason=(
                 self._refusal_reason(target_id, result.phase, baseline.text, result.target_runtime)
                 if not result.dispatched
-                else ("" if result.prompt_verified else "prompt_not_verified")
+                else (
+                    "host_prompt_check_overridden"
+                    if overridden
+                    else ("" if result.prompt_verified else "prompt_not_verified")
+                )
             ),
         )
+
+    def _override_allowed(self, result: object, baseline_text: str) -> bool:
+        """The hard whitelist. Every clause is a separate way to say no.
+
+        Written as one function so the conditions cannot drift apart from each
+        other, and so a future caller cannot satisfy "the operator asked" without
+        also satisfying "and the evidence is there".
+        """
+        phase = getattr(result, "phase", "")
+        runtime = getattr(result, "target_runtime", "")
+        if phase != "rejected_prompt_not_empty":
+            # The only refusal where this side holds falsifying evidence. A trust
+            # prompt, a stale revision or a duplicate are not this, and nothing in
+            # the mechanism would notice the difference — so the scope is explicit.
+            return False
+        if runtime != "codex":
+            # claude and kimi have no observed placeholder entries, so this side's
+            # detector agrees with the host there. Overriding would mean overruling
+            # a verdict this side did not contradict.
+            return False
+        # The verdict must come from the text of the snapshot whose revision was
+        # passed to the host. Re-reading here would be the bug: the write would be
+        # authorised at a revision nobody judged.
+        return detect_prompt_state(baseline_text, runtime) == EMPTY
+
+    def _record_override(self, target_id: str, runtime: str, revision: int) -> None:
+        """Append one durable line per override.
+
+        Without this the fix quietly deletes the evidence that would justify or
+        condemn it: nobody could say afterwards whether this fired twice or two
+        thousand times, and "most idle Codex panes" was asserted, never counted.
+        A failure to write must not block a send the operator authorised, so this
+        swallows I/O errors — the send is the user's, the log is ours.
+        """
+        try:
+            path = _override_log_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            row = {
+                "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "target_id": target_id,
+                "runtime": runtime,
+                "revision": revision,
+                "reason": "host_says_occupied_screen_says_empty",
+            }
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(row, sort_keys=True) + "\n")
+        except OSError:
+            pass
 
     def _refusal_reason(
         self, target_id: str, phase: str, pane_text: str, runtime: str
