@@ -76,9 +76,25 @@ _BLOCKING_PROMPTS: tuple[tuple[str, str], ...] = (
 _BLOCK_SETTLE_SECONDS = 3.0
 
 
+#: How far back a dialog may be recognised. A dialog occupies the screen NOW; text
+#: further back is history.
+_DIALOG_TAIL_LINES = 40
+
+
 def detect_blocking_prompt(pane_text: str) -> str:
-    """Label a known blocking prompt, or "" when none is recognised."""
-    haystack = pane_text.lower()
+    """Label a known blocking prompt, or "" when none is recognised.
+
+    Scoped to the recent screen. `send` captures 1000 lines for revision tracking,
+    and matching a phrase anywhere in that made every dialog permanent: a pane that
+    ever showed "Do you trust this folder" was refused forever, and `pane_clear`
+    could not help because the text sat in scrollback rather than in the prompt.
+    Since `panes_create` produces exactly such a pane, the create-then-send flow —
+    the whole tmux path — was unusable.
+    """
+    # rstrip first: a capture is padded with the pane's empty rows, and in a pane
+    # whose content sits at the top the tail window would land entirely in that
+    # padding and see nothing. `detect_prompt_state` strips for the same reason.
+    haystack = "\n".join(pane_text.rstrip().splitlines()[-_DIALOG_TAIL_LINES:]).lower()
     for needle, label in _BLOCKING_PROMPTS:
         if needle in haystack:
             return label
@@ -341,6 +357,36 @@ class TmuxBackend:
             try:
                 before = capture_pane(target_id, 1000)
 
+                # ONE observation of the runtime, reused by all three decisions
+                # below. Each call is a `tmux list-panes -a` plus a `ps -A`, and
+                # calling it per-decision inside the lock was not only three times
+                # the subprocesses: it made the value that picks the prompt markers,
+                # the value that passes the gate, and the value in the receipt three
+                # independent readings of a pane that can change between them.
+                runtime = self._runtime_of(target_id)
+
+                # FIRST, because it is a boundary and not a heuristic. `classify_tree`
+                # exists because "a pane that used to run an agent and now runs a plain
+                # shell must never be treated as an agent target, or a spoken
+                # instruction becomes an arbitrary shell command" — and the send path
+                # never checked. Typing into a shell and pressing Enter IS running a
+                # command, reachable by voice.
+                #
+                # It has to run before the dialog table, not after. A shell pane whose
+                # screen happens to hold a dialog phrase — an agent that just exited, a
+                # catted log — was being reported as `rejected_trust_prompt`, which
+                # sends the operator to answer a dialog that is not there and hides the
+                # refusal that actually matters. The send was refused either way; the
+                # sentence was wrong, and the boundary was a side effect of a keyword
+                # match, which is exactly what this check exists not to be.
+                if runtime not in AGENT_RUNTIMES:
+                    return SendOutcome(
+                        phase="rejected_not_an_agent",
+                        dispatched=False,
+                        runtime=runtime,
+                        reason=f"pane is running {runtime or 'something unrecognised'}",
+                    )
+
                 # Refuse rather than type into a dialog. This is not only a receipt
                 # concern: a blocking prompt is usually a menu, so text followed by
                 # Enter can SELECT one of its options. On the first live run the
@@ -350,32 +396,19 @@ class TmuxBackend:
                 # tmux cannot enforce an empty prompt, which is why
                 # empty_prompt_check is declared False - but declining a state we
                 # can positively recognise is strictly better than writing blind.
-                blocking = detect_blocking_prompt(before)
+                # The prompt state is the stronger signal, so it is consulted
+                # first. A dialog REPLACES the input line; if the input line is
+                # present and EMPTY, the agent is accepting input and any dialog
+                # phrase still on screen is a leftover. Keyword recognition then
+                # only decides how to NAME a refusal, never whether one happens.
+                prompt_state = detect_prompt_state(before, runtime)
+                blocking = detect_blocking_prompt(before) if prompt_state != EMPTY else ""
                 if blocking:
                     return SendOutcome(
                         phase=f"rejected_{blocking}",
                         dispatched=False,
-                        runtime=self._runtime_of(target_id),
-                        reason=blocking,
-                    )
-
-                runtime = self._runtime_of(target_id)
-                # Nothing enforced this before, and it should have from the start.
-                # `classify_tree` exists because "a pane that used to run an agent and
-                # now runs a plain shell must never be treated as an agent target, or a
-                # spoken instruction becomes an arbitrary shell command" — and then the
-                # send path never checked. Typing into a shell and pressing Enter IS
-                # running a command, reachable by voice.
-                #
-                # The prompt check below happens to refuse these too, because an
-                # unknown runtime has no marker to judge, but relying on that would
-                # leave a security boundary as a side effect of a heuristic.
-                if runtime not in AGENT_RUNTIMES:
-                    return SendOutcome(
-                        phase="rejected_not_an_agent",
-                        dispatched=False,
                         runtime=runtime,
-                        reason=f"pane is running {runtime or 'something unrecognised'}",
+                        reason=blocking,
                     )
 
                 # The dialog table above recognises seven known screens. This catches
@@ -385,7 +418,6 @@ class TmuxBackend:
                 # corrupted message. Refusing on anything short of a confident EMPTY
                 # is the same rule the guarded Superset host applies, and `pane_clear`
                 # is the way out of both.
-                prompt_state = detect_prompt_state(before, runtime)
                 if prompt_state != EMPTY:
                     return SendOutcome(
                         phase=(
@@ -442,14 +474,31 @@ class TmuxBackend:
             return SendOutcome(
                 phase="injected",
                 dispatched=True,
-                runtime=self._runtime_of(target_id),
+                # The runtime the gate ADMITTED, not a fresh reading. Re-observing
+                # here would let the receipt name something the guards never saw,
+                # and there is nothing to gain: this value is reported, not checked.
+                runtime=runtime,
                 revision_before=revision_before,
                 revision_after=self._revisions.observe(target_id, after),
             )
 
     def await_acceptance(
-        self, target_id: str, canary: str | None, *, timeout: float = 8.0
+        self,
+        target_id: str,
+        canary: str | None,
+        *,
+        timeout: float = 8.0,
+        client_token: str | None = None,
     ) -> AcceptanceOutcome:
+        """Watch this pane for the canary.
+
+        `client_token` names which send is being proven. tmux keeps no per-send
+        context - the canary is unique and the pane is the target, so there is
+        nothing here to look up - but the parameter is part of the backend contract
+        and omitting it broke every tmux send the moment the caller started passing
+        it. Accepting and ignoring it is the honest shape: the interface is uniform,
+        and no proof is invented from it.
+        """
         if canary is None:
             # Never testable, which is not the same as failed.
             return AcceptanceOutcome(False, 0, "no_canary")

@@ -172,12 +172,12 @@ class TmuxSendGuardTests(unittest.TestCase):
         self.assertFalse(outcome.dispatched)
         self.assertNotIn("did it arrive?", self.screen())
 
-    def test_a_recognised_dialog_still_wins_over_the_prompt_check(self) -> None:
-        """Order matters: the dialog table is more specific than "has text".
+    def test_a_dialog_is_recognised_when_it_owns_the_input_line(self) -> None:
+        """A dialog REPLACES the composer, so it reads as text, and the table names it.
 
-        A trust prompt reported as `rejected_prompt_not_empty` would send the
-        operator to `pane_clear` instead of telling them a human decision is
-        waiting.
+        The naming matters: `rejected_trust_prompt` tells the operator a human
+        decision is waiting, while `rejected_prompt_not_empty` sends them to
+        `pane_clear`, which cannot answer a dialog.
         """
         self.as_codex()
         send_literal(self.target, "Do you trust the contents of this directory?")
@@ -185,6 +185,96 @@ class TmuxSendGuardTests(unittest.TestCase):
             self.target, "run the tests", canary=None, client_token="trust-1"
         )
         self.assertEqual(outcome.phase, "rejected_trust_prompt")
+
+    def test_a_dialog_scrolled_off_the_screen_no_longer_blocks(self) -> None:
+        """The bug that made the whole tmux path unusable.
+
+        `send` captures 1000 lines for revision tracking, and the dialog table used
+        to match anywhere in them — so a pane that had ever shown a trust prompt was
+        refused for the rest of its life, and `pane_clear` could not help because the
+        text sat in scrollback rather than in the prompt. Every pane `panes_create`
+        makes shows one, so create-then-send never worked.
+
+        Asserted on the pure function rather than through a `cat` pane: the rule is
+        about which region of a capture is "now", and a fixture that has to reproduce
+        a TUI's redraw to express that tests the fixture.
+        """
+        from yapitalism.mcp.backends.tmux_backend import detect_blocking_prompt
+
+        dialog = "Do you trust the contents of this directory?"
+        scrolled = dialog + "\n" + "\n".join(f"output {i}" for i in range(60))
+        self.assertEqual(detect_blocking_prompt(scrolled), "")
+        # Still on screen, still blocking.
+        self.assertEqual(detect_blocking_prompt(dialog + "\noutput"), "trust_prompt")
+
+    def test_a_shell_pane_showing_a_dialog_is_still_refused_as_a_shell(self) -> None:
+        """The gate is a boundary; the dialog table is a naming heuristic.
+
+        Both were covered alone, and the interaction between them was not — which is
+        how an ordering that put the keyword match first passed 286 tests. A pane
+        running a plain shell whose screen holds a dialog phrase (an agent that just
+        exited, a catted log) was reported as `rejected_trust_prompt`: the operator
+        was sent to answer a dialog that is not there, and the refusal that means
+        "writing here runs a command" never reached them.
+
+        The send was refused either way. What was wrong was which refusal, and that
+        a boundary had become a side effect of a keyword match.
+        """
+        from unittest.mock import patch
+
+        from yapitalism.mcp.backends import tmux_backend as tb
+
+        screen = "Do you trust the contents of this directory?\n1. Yes\n2. No"
+        with patch.object(tb.TmuxBackend, "_runtime_of", return_value="bash"), patch.object(
+            tb, "capture_pane", return_value=screen
+        ):
+            outcome = tb.TmuxBackend().send(
+                "tmux:%1", "hello", canary=None, client_token="shell-dialog"
+            )
+        self.assertEqual(outcome.phase, "rejected_not_an_agent")
+        self.assertFalse(outcome.dispatched)
+
+    def test_the_runtime_is_observed_once_per_send(self) -> None:
+        """Three readings of a changing pane are three different panes.
+
+        Each `_runtime_of` is a `tmux list-panes -a` plus a `ps -A`. Calling it per
+        decision inside the held lock meant the value that picked the prompt markers,
+        the value the gate admitted, and the value in the receipt were independent
+        observations — so a receipt could name a runtime the guards never saw.
+        """
+        from unittest.mock import patch
+
+        from yapitalism.mcp.backends import tmux_backend as tb
+
+        calls = []
+
+        def counting(self, target_id):  # noqa: ANN001
+            calls.append(target_id)
+            return "codex"
+
+        idle = "earlier output\n› Use /skills to list available skills"
+        with patch.object(tb.TmuxBackend, "_runtime_of", counting), patch.object(
+            tb, "capture_pane", return_value=idle
+        ), patch.object(tb, "send_literal"), patch.object(tb, "send_enter"), patch.object(
+            tb, "time"
+        ):
+            outcome = tb.TmuxBackend().send(
+                "tmux:%1", "hello", canary="X", client_token="once"
+            )
+        self.assertTrue(outcome.dispatched)
+        self.assertEqual(len(calls), 1)
+
+    def test_the_dialog_window_survives_a_pane_padded_with_blank_rows(self) -> None:
+        """A capture is padded with the pane's empty rows.
+
+        In a pane whose content sits at the top, a tail window that counts raw lines
+        lands entirely in that padding and sees nothing — so the check would silently
+        stop working on exactly the panes it was written for.
+        """
+        from yapitalism.mcp.backends.tmux_backend import detect_blocking_prompt
+
+        padded = "Do you trust the contents of this directory?" + "\n" * 200
+        self.assertEqual(detect_blocking_prompt(padded), "trust_prompt")
 
 
 if __name__ == "__main__":  # pragma: no cover

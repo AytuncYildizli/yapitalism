@@ -313,23 +313,26 @@ class StockHostDispatchTests(unittest.TestCase):
 class PromptDetectorSafetyTests(unittest.TestCase):
     """The two corruption paths a council review found in this detector."""
 
-    def test_a_hint_below_the_composer_does_not_hide_typed_text(self) -> None:
-        """The bug: one marker line used to decide the whole verdict.
+    def test_the_live_prompt_is_the_last_marker_line(self) -> None:
+        """Codex echoes each submitted prompt with the same marker.
 
-        This function does not identify the editable buffer, only lines that start
-        like one. If a runtime draws its hint BELOW the composer, the bottom-most
-        line is the hint, the typed text above is never examined, and the verdict is
-        EMPTY. The send then appends to somebody's sentence and submits the merge —
-        and the merged line still contains the canary, so the receipt comes back
-        GREEN. The error certifies itself.
+        Measured on a real pane: the instruction just sent sits ABOVE an empty
+        composer. Judging every marker line and letting text win — which an earlier
+        version did, to cover a hint-below-composer case that was reasoned about but
+        never observed — refused every pane that had ever been sent to.
         """
-        from yapitalism.prompt_state import HAS_TEXT, detect_prompt_state
+        from yapitalism.prompt_state import EMPTY, HAS_TEXT, detect_prompt_state
 
-        below = "output\n\u203a half a typed thought\n\u203a Use /skills to list available skills"
-        self.assertEqual(detect_prompt_state(below, "codex"), HAS_TEXT)
-        # And the other order, which the old code happened to get right.
-        above = "output\n\u203a Use /skills to list available skills\n\u203a half a typed thought"
-        self.assertEqual(detect_prompt_state(above, "codex"), HAS_TEXT)
+        echoed = (
+            "\u203a Reply with exactly the word READY\n"
+            "\u2022 READY\n"
+            "\u203a Use /skills to list available skills"
+        )
+        self.assertEqual(detect_prompt_state(echoed, "codex"), EMPTY)
+
+        # And real staged text at the bottom still reads as text.
+        staged = "\u203a an older instruction\n\u2022 done\n\u203a half a typed thought"
+        self.assertEqual(detect_prompt_state(staged, "codex"), HAS_TEXT)
 
     def test_a_placeholder_a_human_could_type_is_not_listed(self) -> None:
         """Admissibility: an entry needs a token a person would not type.
@@ -386,18 +389,54 @@ class RefusalWordingTests(unittest.TestCase):
         self.assertNotIn("Aynı mesajın tekrarını engelledim", line)
 
     def test_a_shell_pane_refusal_says_why_it_matters(self) -> None:
-        self.assertIn("komut çalıştırmak", self.speak("rejected_not_an_agent"))
+        self.assertIn("komut", self.speak("rejected_not_an_agent"))
 
     def test_staged_text_is_reported_as_not_sent(self) -> None:
         """The operator must know the message is sitting in the prompt, or they
         wait for a reply that cannot come."""
         line = self.speak("staged_not_submitted")
-        self.assertIn("gönderilemedi", line)
         self.assertIn("prompt", line)
+        self.assertTrue(line.startswith("Gönderilmedi"), line)
+
+    def test_every_refusal_leads_with_the_same_word(self) -> None:
+        """The lead word is the whole signal on a voice channel.
+
+        A refusal is the one outcome the operator may safely retry, and it has to
+        be separable from an unproven delivery by the first word alone — the rest
+        of the sentence is often not heard.
+        """
+        phases = (
+            "rejected_trust_prompt",
+            "rejected_auth_prompt",
+            "rejected_confirm_prompt",
+            "rejected_prompt_not_empty",
+            "rejected_prompt_unreadable",
+            "rejected_not_an_agent",
+            "rejected_revision_changed",
+            "duplicate_after_ambiguous_write",
+            "duplicate_seen_token",
+            "staged_not_submitted",
+            "something_nobody_has_named_yet",
+        )
+        for phase in phases:
+            with self.subTest(phase=phase):
+                self.assertTrue(self.speak(phase).startswith("Gönderilmedi:"))
+        self.assertTrue(
+            self.speak(
+                "rejected_prompt_not_empty", "host_says_occupied_screen_says_empty"
+            ).startswith("Gönderilmedi:")
+        )
 
 
 class ReceiptWordingTests(unittest.TestCase):
-    """A client-enforced GREEN is still a GREEN, and must not sound identical."""
+    """Enforcement attribution is recorded, and is not read aloud.
+
+    Who enforced which guarantee is real and stays in the payload for the model,
+    the log and `doctor`. It was also spoken on every GREEN, where it is
+    invisible: there is no different action behind "the host checked this" and
+    "this side checked this". The tests below pin both halves — the payload still
+    tells the three cases apart, and the sentence no longer tries to.
+    """
 
     def receipt(self, caps: Any) -> Any:
         return build_receipt(
@@ -406,31 +445,29 @@ class ReceiptWordingTests(unittest.TestCase):
             caps,
         )
 
-    def test_host_enforced_green_carries_no_caveat(self) -> None:
+    def test_a_green_names_the_agent_and_says_nothing_else(self) -> None:
         from yapitalism.mcp.backends.superset_backend import HOST_GUARDED
 
         receipt = self.receipt(HOST_GUARDED)
         self.assertEqual(receipt.status, "GREEN")
-        self.assertEqual(receipt.speak, "Ajan aldı ve işledi.")
+        self.assertEqual(receipt.speak, "codex aldı.")
         self.assertNotIn("client_guarantees", receipt.as_dict())
 
-    def test_client_enforced_green_says_who_checked(self) -> None:
+    def test_client_enforcement_is_recorded_not_spoken(self) -> None:
         from yapitalism.mcp.backends.superset_backend import CLIENT_GUARDED
 
         receipt = self.receipt(CLIENT_GUARDED)
         self.assertEqual(receipt.status, "GREEN")
-        # The two wordings must differ, or the distinction exists only in a field
-        # nobody hears.
-        self.assertIn("bu taraf", receipt.speak)
         payload = receipt.as_dict()
         self.assertEqual(payload["client_guarantees"], list(GUARANTEES))
         # Nothing is unchecked on this path any more, so there is no
         # missing_guarantees list to carry.
         self.assertNotIn("missing_guarantees", payload)
+        self.assertEqual(receipt.speak, "codex aldı.")
 
-    def test_tmux_green_reports_a_mix_of_checked_and_unchecked(self) -> None:
-        """tmux now checks two of three, so it is neither the old all-NONE nor a
-        client-clean path. The mixed wording exists for exactly this case."""
+    def test_tmux_green_records_a_mix_of_checked_and_unchecked(self) -> None:
+        """tmux checks two of three, so it is neither the old all-NONE nor a
+        client-clean path. The payload keeps that apart; the sentence does not."""
         from yapitalism.mcp.backends.tmux_backend import TMUX_CAPABILITIES
 
         receipt = self.receipt(TMUX_CAPABILITIES)
@@ -438,7 +475,38 @@ class ReceiptWordingTests(unittest.TestCase):
         self.assertEqual(receipt.status, "GREEN")
         self.assertEqual(payload["client_guarantees"], ["idempotent_dispatch", "empty_prompt_check"])
         self.assertEqual(payload["missing_guarantees"], ["optimistic_revision"])
-        self.assertIn("hiç", receipt.speak)
+        self.assertEqual(receipt.speak, "codex aldı.")
+
+    def test_no_spoken_line_carries_enforcement_vocabulary(self) -> None:
+        """The regression this file exists to prevent, pointed the other way.
+
+        The wording used to leak the internal model out loud — "host", "revision",
+        "token", "backend". None of it changes what the operator does.
+        """
+        from yapitalism.mcp.backends.superset_backend import (
+            CLIENT_GUARDED,
+            HOST_GUARDED,
+            UNKNOWN_HOST,
+        )
+        from yapitalism.mcp.backends.tmux_backend import TMUX_CAPABILITIES
+
+        jargon = ("host", "revision", "token", "backend", "guarantee", "canary")
+        lines = [self.receipt(caps).speak for caps in
+                 (HOST_GUARDED, CLIENT_GUARDED, UNKNOWN_HOST, TMUX_CAPABILITIES)]
+        for phase in ("rejected_prompt_not_empty", "rejected_not_an_agent",
+                      "staged_not_submitted", "rejected_revision_changed"):
+            lines.append(
+                build_receipt(
+                    SendOutcome(phase=phase, dispatched=False, runtime="codex"),
+                    AcceptanceOutcome(observed=False, attempts=0),
+                    HOST_GUARDED,
+                ).speak
+            )
+        for line in lines:
+            with self.subTest(line=line):
+                lowered = line.lower()
+                for word in jargon:
+                    self.assertNotIn(word, lowered)
 
 
 if __name__ == "__main__":  # pragma: no cover

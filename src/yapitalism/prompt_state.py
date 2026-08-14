@@ -90,43 +90,30 @@ def detect_prompt_state(pane_text: str, runtime: str) -> str:
         return UNKNOWN
     placeholders = _PLACEHOLDERS.get(runtime, ())
     lines = _strip_ansi(pane_text).rstrip().splitlines()
-    # EVERY marker line in the tail is judged, and any one holding real text wins.
+    # The LAST marker line is the live input line; everything above it is
+    # transcript. Codex echoes each submitted prompt back with the same marker, so
+    # scanning bottom-up and stopping at the first match is what tracks the composer.
     #
-    # The first version returned on the bottom-most marker line alone, which is a
-    # corruption path rather than an imprecision: this function does not identify
-    # the editable buffer, only lines that start like one. If a runtime ever draws
-    # its hint BELOW the composer, the bottom-most line is the hint, the typed text
-    # above it is never examined, and the verdict is EMPTY. The send then appends to
-    # somebody's sentence and submits the merge — and because the merged line still
-    # contains the canary, the receipt comes back GREEN. The error would certify
-    # itself.
-    #
-    # Scanning all of them and letting text win costs only over-refusal, which
-    # `pane_clear` can resolve, and cannot corrupt anything.
-    verdicts: list[str] = []
-    for raw in lines[-_TAIL_LINES:]:
+    # This briefly judged EVERY marker line and let any one holding text win, to
+    # close a case where a runtime might draw its hint BELOW the composer. That case
+    # was reasoned about, never observed - and running the real path showed the
+    # observed shape is the opposite: an instruction echoed ABOVE an empty prompt.
+    # The "safer" rule refused every pane that had ever been sent to. Bottom-most it
+    # is, and the placeholder table is what keeps a hint from reading as input.
+    for raw in reversed(lines[-_TAIL_LINES:]):
         line = raw.strip()
         if not line or not line.startswith(markers):
             continue
         body = line[1:].strip()
         if not body:
-            verdicts.append(EMPTY)
-            continue
+            return EMPTY
         lowered = body.lower()
         if any(lowered == placeholder for placeholder in placeholders):
-            verdicts.append(EMPTY)
-            continue
-        # A box-drawing line or a status bar can begin with '>' too, so a body
-        # that is only punctuation says nothing either way.
+            return EMPTY
+        # A box-drawing line or a status bar can begin with '>' too, so a body that
+        # is only punctuation says nothing either way.
         if not any(character.isalnum() for character in body):
-            verdicts.append(UNKNOWN)
-            continue
-        verdicts.append(HAS_TEXT)
-    if not verdicts:
-        # No input line found at all — a menu, an overlay, a full-screen diff.
-        return UNKNOWN
-    if HAS_TEXT in verdicts:
+            return UNKNOWN
         return HAS_TEXT
-    if UNKNOWN in verdicts:
-        return UNKNOWN
-    return EMPTY
+    # No input line found at all - a menu, an overlay, a full-screen diff.
+    return UNKNOWN
