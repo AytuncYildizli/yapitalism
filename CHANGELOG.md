@@ -6,6 +6,68 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-14
+
+The tmux path was run end to end for the first time and did not work. Everything
+below was found by using the tool, not by reading it — 279 tests passed throughout.
+
+### Fixed
+
+- **A dialog in scrollback blocked a pane forever.** `send` captures 1000 lines for
+  revision tracking, and the blocking-prompt table matched a phrase anywhere in them.
+  Every pane `panes_create` makes shows a trust prompt, so once it was *answered* the
+  pane was still refused — permanently, with `pane_clear` unable to help because the
+  text sat in scrollback rather than in the prompt. The whole create-then-send flow
+  had never worked. Recognition is now scoped to the recent screen.
+- **`TmuxBackend.await_acceptance` did not accept `client_token`.** The
+  operation-scoping work added the parameter to the caller and to the Superset
+  backend only, so every tmux send through `pane_send` had been crashing since. No
+  test drove the live tmux path through the tool.
+- **That crash lost a delivered message.** The write landed, the agent answered, and
+  the watcher raised `TypeError` — not `BackendError` — so it fell through to the
+  generic tool error, indistinguishable from "nothing happened". The acceptance phase
+  now degrades **every** exception to YELLOW: by then the write is in the terminal,
+  and whatever failed to watch it must not erase the evidence that it landed.
+- **The not-an-agent gate could be shadowed by a keyword match.** A pane running a
+  plain shell whose screen held a dialog phrase was reported as `rejected_trust_prompt`
+  — the send was still refused, but the operator was sent to answer a dialog that does
+  not exist and the refusal that means "writing here runs a command" never surfaced.
+  The runtime gate now runs before the dialog table.
+- **The runtime was observed three times per send**, each a `tmux list-panes` plus a
+  `ps`, inside the held lock. The value that picked the prompt markers, the value the
+  gate admitted and the value in the receipt were independent readings of a pane that
+  can change between them. One observation now, reused.
+- **`setup` reported healthy while every call returned 401** (from 0.2.0's follow-up):
+  Superset rotates the token in its own manifest and our cached copy goes stale, but
+  the check was reading the host's fresh token rather than the one this tool actually
+  sends.
+
+### Changed
+
+- **The spoken surface collapses to two acts.** Six different sentences reached the
+  operator's ear, each naming a different internal state, when the operator can only
+  do two things — carry on, or act.
+  - `RED` always leads with `Gönderilmedi`. On a voice channel the first word is often
+    the only word heard, and a refusal is the one outcome that can safely be retried.
+  - `YELLOW` always leads with `Gönderdim` and offers to **look**, never to resend:
+    the text is already in the terminal, so a retry would deliver it twice.
+  - `GREEN` is `codex aldı.` and nothing else.
+
+  `status`, `phase`, `client_guarantees` and `missing_guarantees` are unchanged in the
+  payload. Only the `speak` string changed shape — if you were matching on its text,
+  match on `status` instead.
+- **Panes are named the way a person names them.** `speak` was saying
+  `pane tmux:%6`, read aloud as "pane tmux percent six". It now says
+  `relayproof klasöründeki codex`; the id stays in the payload where the model needs it.
+- **Enforcement attribution is no longer read aloud.** Whether the host or this process
+  checked a guarantee is real and stays in the payload — there is no different action
+  behind it for the person listening.
+- **Turkish is spelled with Turkish letters** in every spoken line. ASCII-folded
+  Turkish is a mispronunciation, not a spelling preference: a TTS engine reads `hazir`
+  and `klasorundeki` with the wrong vowels.
+
+289 tests, up from 279.
+
 ## [0.2.0] - 2026-08-14
 
 Nine defects. Six reported by [@efe-arv](https://github.com/efe-arv) with file:line
