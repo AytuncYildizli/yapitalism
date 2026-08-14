@@ -94,6 +94,11 @@ These levels are asked of the host, not assumed. They were constants describing 
 until that was caught: every stock user would have received a GREEN asserting three guards their
 host had never heard of.
 
+**The guarded build is not something you can install.** The atomic `terminal.send` lives in a
+Superset fork that is not upstream, so today every other machine gets the `client` column — a real
+guarantee, checked a moment before the write instead of atomically with it. Saying which one you
+have is the point; pretending everyone has the first would be the same overclaim one level up.
+
 Both reach GREEN. They are not the same GREEN, and saying so is the difference between a receipt and
 a decoration.
 
@@ -237,7 +242,13 @@ Stated plainly, because a receipt system that overclaims is worse than none:
   suggestion line as staged input, so sends to such panes are refused and clearing cannot help. The
   receipt says exactly that instead of advising a clear. The fix belongs in the host.
 - **A tmux pane's runtime can go stale** between the check and the write. Superset's comes from the
-  host's own registry and cannot.
+  host's own registry, which is why its gate can run before the write rather than after it.
+- **A canary proves less than "it worked".** It proves the text reached something that then echoed a
+  one-time marker — delivery and acknowledgement. It does not prove the agent did the work, did only
+  the work, or that the pane was the one you meant. GREEN is a delivery receipt, not a work receipt.
+- **Concurrent sends to one pane are serialized, not queued.** The second waits for the first; it is
+  not held, ordered, or retried. A voice client that fires faster than a terminal accepts will block
+  its own turn rather than interleave.
 - Connector-in-voice behaviour in closed clients is undocumented and can change without notice.
 
 ## Repository map
