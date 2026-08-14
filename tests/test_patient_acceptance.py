@@ -36,11 +36,20 @@ class ScriptedBackend:
         self._pane = list(pane)
         self._observe_after = observe_after
         self.acceptance_calls = 0
+        self.observed_tokens: list[str | None] = []
         self.read_calls = 0
 
     def await_acceptance(
-        self, target_id: str, canary: str | None, *, timeout: float = 8.0
+        self,
+        target_id: str,
+        canary: str | None,
+        *,
+        timeout: float = 8.0,
+        client_token: str | None = None,
     ) -> AcceptanceOutcome:
+        # The token names WHICH send is being proven; the patient waiter threads it
+        # through so a backend can no longer answer with "the most recent send".
+        self.observed_tokens.append(client_token)
         self.acceptance_calls += 1
         if (
             self._observe_after is not None
