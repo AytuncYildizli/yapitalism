@@ -8,25 +8,38 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [0.2.0] - 2026-08-14
 
-A security release. It closes a path by which a spoken instruction could reach a
-terminal running a plain shell, where text followed by Enter is an executed command.
-If you are on 0.1.x, upgrade.
+Nine defects. Six reported by [@efe-arv](https://github.com/efe-arv) with file:line
+evidence and working reproducers; three more found by an independent audit across five
+models.
 
-Found by [@efe-arv](https://github.com/efe-arv), who filed six issues with file:line
-evidence and working reproducers, and confirmed by an independent audit across five
-models. Three further defects surfaced during that audit.
+**Corrected after publication.** This release first went out described as a "security
+release", with a draft advisory. That was an overstatement, and the advisory was closed
+without being published. A misrouted send gives nobody a capability they did not already
+have: the person speaking already has a shell on their own machine, the server binds to
+loopback only, and no trust boundary is crossed. It is a routing defect with a bad
+failure mode. Calling it a vulnerability is the same error this project exists to avoid,
+pointed the other way — and the correction belongs in the record rather than in a quiet
+edit.
 
-### Security
+### Fixed
 
-- **A send could reach a non-agent pane on the Superset backend.** The runtime was
-  reported after the write rather than checked before it, so by the time the pane was
-  known to be a shell, the shell had run the text. The check now happens before the
-  write, against the host's own agent registry. A runtime that disagrees afterwards is
-  refused as delivered — the write cannot be recalled, but the receipt can decline to
-  call it an instruction the agent received. (#16)
-- **`pane_clear` had no runtime check at all.** Clearing writes control bytes, which a
-  shell interprets as keys. Fixing only the send path left the other voice-reachable
-  mutation open.
+- **A send could reach a pane that is not running an agent** (Superset backend). The
+  runtime was read from the dispatch *response*, so the write had already happened by
+  the time the pane was known to be a shell. tmux refused non-agent panes up front; this
+  path had no equivalent check.
+
+  What it costs: the text is typed and Enter is pressed. On an agent pane that is an
+  instruction the agent interprets and can refuse; on a shell pane it is a command line —
+  usually nonsense that fails with `command not found`, occasionally a real command when
+  the dictated sentence happens to begin with one. Either way it is the wrong place for
+  it, and `classify_tree` already documented that it must never happen.
+
+  The check now runs before the write, against the host's own agent registry, and a
+  runtime that disagrees afterwards is refused as delivered rather than reported as an
+  instruction the agent received. (#16)
+- **`pane_clear` had no runtime check at all**, on either backend. Clearing writes
+  control bytes, which a shell reads as keys. Fixing only the send path would have left
+  the other voice-reachable mutation open.
 
 ### Fixed
 
