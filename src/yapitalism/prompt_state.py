@@ -90,19 +90,6 @@ def detect_prompt_state(pane_text: str, runtime: str) -> str:
         return UNKNOWN
     placeholders = _PLACEHOLDERS.get(runtime, ())
     lines = _strip_ansi(pane_text).rstrip().splitlines()
-    # EVERY marker line in the tail is judged, and any one holding real text wins.
-    #
-    # The first version returned on the bottom-most marker line alone, which is a
-    # corruption path rather than an imprecision: this function does not identify
-    # the editable buffer, only lines that start like one. If a runtime ever draws
-    # its hint BELOW the composer, the bottom-most line is the hint, the typed text
-    # above it is never examined, and the verdict is EMPTY. The send then appends to
-    # somebody's sentence and submits the merge — and because the merged line still
-    # contains the canary, the receipt comes back GREEN. The error would certify
-    # itself.
-    #
-    # Scanning all of them and letting text win costs only over-refusal, which
-    # `pane_clear` can resolve, and cannot corrupt anything.
     # The LAST marker line is the live input line; everything above it is
     # transcript. Codex echoes each submitted prompt back with the same marker, so
     # scanning bottom-up and stopping at the first match is what tracks the composer.

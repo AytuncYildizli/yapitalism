@@ -16,7 +16,7 @@ class SpokenPaneNameTests(unittest.TestCase):
     def test_a_pane_is_named_by_its_folder_and_runtime(self) -> None:
         self.assertEqual(
             _spoken_pane_name("/Users/a/projects/relayproof", "codex"),
-            "relayproof klasorundeki codex",
+            "relayproof klasöründeki codex",
         )
 
     def test_a_missing_directory_falls_back_to_the_runtime_alone(self) -> None:
@@ -25,8 +25,33 @@ class SpokenPaneNameTests(unittest.TestCase):
 
     def test_a_trailing_slash_does_not_produce_an_empty_name(self) -> None:
         self.assertEqual(
-            _spoken_pane_name("/Users/a/work/whip/", "claude"), "whip klasorundeki claude"
+            _spoken_pane_name("/Users/a/work/whip/", "claude"), "whip klasöründeki claude"
         )
+
+    def test_every_spoken_line_uses_real_turkish_letters(self) -> None:
+        """ASCII-folded Turkish is a mispronunciation, not a spelling preference.
+
+        `hazir` and `klasorundeki` come out of a TTS engine with the wrong vowels,
+        and the two halves of this server were spelling Turkish two different ways
+        depending on which tool answered.
+        """
+        import pathlib
+
+        source = (
+            pathlib.Path(__file__).resolve().parent.parent
+            / "src/yapitalism/mcp/server.py"
+        ).read_text()
+        # Words that are only ever the ASCII folding of a Turkish word. Each was
+        # actually shipped in a spoken line.
+        folded = (
+            "basladi", "calisiyor", "calismiyor", "calistigi", "hazir", "klasorundeki",
+            "bos olabilir", "acildi", "olusturuldu", "gecmek", "gondermeden",
+            "ekrani", "kapandi", "degisti", "degismedi", "bosaldigini",
+            "dogrulayamam", "dogrulanamadi", "yaramadi", "Tusu", "Simdi", "icinde",
+        )
+        for word in folded:
+            with self.subTest(word=word):
+                self.assertNotIn(word, source)
 
     def test_no_spoken_line_reads_a_target_id_aloud(self) -> None:
         """The id belongs in the payload, where the model needs it for the next call.

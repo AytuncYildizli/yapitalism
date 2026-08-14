@@ -207,6 +207,63 @@ class TmuxSendGuardTests(unittest.TestCase):
         # Still on screen, still blocking.
         self.assertEqual(detect_blocking_prompt(dialog + "\noutput"), "trust_prompt")
 
+    def test_a_shell_pane_showing_a_dialog_is_still_refused_as_a_shell(self) -> None:
+        """The gate is a boundary; the dialog table is a naming heuristic.
+
+        Both were covered alone, and the interaction between them was not — which is
+        how an ordering that put the keyword match first passed 286 tests. A pane
+        running a plain shell whose screen holds a dialog phrase (an agent that just
+        exited, a catted log) was reported as `rejected_trust_prompt`: the operator
+        was sent to answer a dialog that is not there, and the refusal that means
+        "writing here runs a command" never reached them.
+
+        The send was refused either way. What was wrong was which refusal, and that
+        a boundary had become a side effect of a keyword match.
+        """
+        from unittest.mock import patch
+
+        from yapitalism.mcp.backends import tmux_backend as tb
+
+        screen = "Do you trust the contents of this directory?\n1. Yes\n2. No"
+        with patch.object(tb.TmuxBackend, "_runtime_of", return_value="bash"), patch.object(
+            tb, "capture_pane", return_value=screen
+        ):
+            outcome = tb.TmuxBackend().send(
+                "tmux:%1", "hello", canary=None, client_token="shell-dialog"
+            )
+        self.assertEqual(outcome.phase, "rejected_not_an_agent")
+        self.assertFalse(outcome.dispatched)
+
+    def test_the_runtime_is_observed_once_per_send(self) -> None:
+        """Three readings of a changing pane are three different panes.
+
+        Each `_runtime_of` is a `tmux list-panes -a` plus a `ps -A`. Calling it per
+        decision inside the held lock meant the value that picked the prompt markers,
+        the value the gate admitted, and the value in the receipt were independent
+        observations — so a receipt could name a runtime the guards never saw.
+        """
+        from unittest.mock import patch
+
+        from yapitalism.mcp.backends import tmux_backend as tb
+
+        calls = []
+
+        def counting(self, target_id):  # noqa: ANN001
+            calls.append(target_id)
+            return "codex"
+
+        idle = "earlier output\n› Use /skills to list available skills"
+        with patch.object(tb.TmuxBackend, "_runtime_of", counting), patch.object(
+            tb, "capture_pane", return_value=idle
+        ), patch.object(tb, "send_literal"), patch.object(tb, "send_enter"), patch.object(
+            tb, "time"
+        ):
+            outcome = tb.TmuxBackend().send(
+                "tmux:%1", "hello", canary="X", client_token="once"
+            )
+        self.assertTrue(outcome.dispatched)
+        self.assertEqual(len(calls), 1)
+
     def test_the_dialog_window_survives_a_pane_padded_with_blank_rows(self) -> None:
         """A capture is padded with the pane's empty rows.
 

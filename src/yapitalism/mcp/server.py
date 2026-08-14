@@ -387,7 +387,7 @@ def _spoken_pane_name(cwd: str, runtime: str) -> str:
     The id stays in the payload, where the model needs it to make the next call.
     """
     folder = cwd.rstrip("/").rsplit("/", 1)[-1] if cwd else ""
-    return f"{folder} klasorundeki {runtime}" if folder else runtime
+    return f"{folder} klasöründeki {runtime}" if folder else runtime
 
 
 @mcp.tool
@@ -436,16 +436,16 @@ def panes_create(
         # instruction, and the send that follows returns an honest YELLOW whose
         # cause is invisible unless this is said out loud.
         speak = (
-            f"{runtime} basladi ama bir onay ekraninda bekliyor "
-            f"({outcome.blocked_on}); is gondermeden once orayi gecmek gerekiyor. "
-            f"{_spoken_pane_name(cwd, runtime)}."
+            f"{_spoken_pane_name(cwd, runtime)} başladı ama bir onay ekranında "
+            f"bekliyor ({outcome.blocked_on}); iş göndermeden önce orayı geçmek "
+            "gerekiyor."
         )
     elif outcome.runtime_confirmed:
-        speak = f"{_spoken_pane_name(cwd, outcome.runtime_observed)} hazir."
+        speak = f"{_spoken_pane_name(cwd, outcome.runtime_observed)} hazır."
     else:
         speak = (
-            f"Oturum acildi ama {runtime} calistigi dogrulanamadi; "
-            f"{_spoken_pane_name(cwd, runtime)} bos olabilir, temizlenmesi gerekebilir."
+            f"Oturum açıldı ama {runtime} çalıştığı doğrulanamadı; "
+            f"{_spoken_pane_name(cwd, runtime)} boş olabilir, temizlenmesi gerekebilir."
         )
     return {"ok": True, "speak": speak, **outcome.as_dict()}
 
@@ -497,14 +497,14 @@ def panes_resume(
     fidelity_line = speak_fidelity(outcome.fidelity)
     if not outcome.runtime_confirmed:
         speak = (
-            f"Oturum olusturuldu ama {runtime} icinde calismiyor: "
+            f"Oturum oluşturuldu ama {runtime} içinde çalışmıyor: "
             f"{_spoken_pane_name(cwd, runtime)}. Temizlenmesi gerekiyor."
         )
     elif outcome.blocked_on:
         speak = (
-            f"{runtime} geri geldi ({fidelity_line}) ama bir ekranda bekliyor "
-            f"({outcome.blocked_on}); is gondermeden once orayi gecmek gerekiyor. "
-            f"{_spoken_pane_name(cwd, runtime)}."
+            f"{_spoken_pane_name(cwd, runtime)} geri geldi ({fidelity_line}) ama bir "
+            f"ekranda bekliyor ({outcome.blocked_on}); iş göndermeden önce orayı "
+            "geçmek gerekiyor."
         )
     else:
         speak = f"{_spoken_pane_name(cwd, runtime)} geri geldi: {fidelity_line}."
@@ -596,18 +596,17 @@ def pane_clear(target_id: str, action: str = "escape") -> dict[str, object]:
 
     if result["recognised_block_cleared"]:
         speak = (
-            f"{result['blocking_before']} ekrani kapandi. Simdi gonderip "
-            "makbuza bakalim."
+            f"{result['blocking_before']} ekranı kapandı. Şimdi gönderebiliriz."
         )
     elif result["pane_changed"]:
         speak = (
-            "Tusu gonderdim, terminalde bir sey degisti ama promptun bosaldigini "
-            "dogrulayamam. Gonderip makbuza bakalim."
+            "Tuşu gönderdim, terminalde bir şey değişti ama prompt'un boşaldığını "
+            "doğrulayamam. Denemek için gönderebiliriz."
         )
     else:
         speak = (
-            "Tusu gonderdim ama terminalde hicbir sey degismedi; muhtemelen "
-            "ise yaramadi."
+            "Tuşu gönderdim ama terminalde hiçbir şey değişmedi; muhtemelen "
+            "işe yaramadı."
         )
     return {"ok": True, "target_id": target_id, "speak": speak, **result}
 

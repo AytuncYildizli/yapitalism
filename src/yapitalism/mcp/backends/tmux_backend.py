@@ -357,6 +357,36 @@ class TmuxBackend:
             try:
                 before = capture_pane(target_id, 1000)
 
+                # ONE observation of the runtime, reused by all three decisions
+                # below. Each call is a `tmux list-panes -a` plus a `ps -A`, and
+                # calling it per-decision inside the lock was not only three times
+                # the subprocesses: it made the value that picks the prompt markers,
+                # the value that passes the gate, and the value in the receipt three
+                # independent readings of a pane that can change between them.
+                runtime = self._runtime_of(target_id)
+
+                # FIRST, because it is a boundary and not a heuristic. `classify_tree`
+                # exists because "a pane that used to run an agent and now runs a plain
+                # shell must never be treated as an agent target, or a spoken
+                # instruction becomes an arbitrary shell command" — and the send path
+                # never checked. Typing into a shell and pressing Enter IS running a
+                # command, reachable by voice.
+                #
+                # It has to run before the dialog table, not after. A shell pane whose
+                # screen happens to hold a dialog phrase — an agent that just exited, a
+                # catted log — was being reported as `rejected_trust_prompt`, which
+                # sends the operator to answer a dialog that is not there and hides the
+                # refusal that actually matters. The send was refused either way; the
+                # sentence was wrong, and the boundary was a side effect of a keyword
+                # match, which is exactly what this check exists not to be.
+                if runtime not in AGENT_RUNTIMES:
+                    return SendOutcome(
+                        phase="rejected_not_an_agent",
+                        dispatched=False,
+                        runtime=runtime,
+                        reason=f"pane is running {runtime or 'something unrecognised'}",
+                    )
+
                 # Refuse rather than type into a dialog. This is not only a receipt
                 # concern: a blocking prompt is usually a menu, so text followed by
                 # Enter can SELECT one of its options. On the first live run the
@@ -371,33 +401,14 @@ class TmuxBackend:
                 # present and EMPTY, the agent is accepting input and any dialog
                 # phrase still on screen is a leftover. Keyword recognition then
                 # only decides how to NAME a refusal, never whether one happens.
-                prompt_state = detect_prompt_state(before, self._runtime_of(target_id))
+                prompt_state = detect_prompt_state(before, runtime)
                 blocking = detect_blocking_prompt(before) if prompt_state != EMPTY else ""
                 if blocking:
                     return SendOutcome(
                         phase=f"rejected_{blocking}",
                         dispatched=False,
-                        runtime=self._runtime_of(target_id),
-                        reason=blocking,
-                    )
-
-                runtime = self._runtime_of(target_id)
-                # Nothing enforced this before, and it should have from the start.
-                # `classify_tree` exists because "a pane that used to run an agent and
-                # now runs a plain shell must never be treated as an agent target, or a
-                # spoken instruction becomes an arbitrary shell command" — and then the
-                # send path never checked. Typing into a shell and pressing Enter IS
-                # running a command, reachable by voice.
-                #
-                # The prompt check below happens to refuse these too, because an
-                # unknown runtime has no marker to judge, but relying on that would
-                # leave a security boundary as a side effect of a heuristic.
-                if runtime not in AGENT_RUNTIMES:
-                    return SendOutcome(
-                        phase="rejected_not_an_agent",
-                        dispatched=False,
                         runtime=runtime,
-                        reason=f"pane is running {runtime or 'something unrecognised'}",
+                        reason=blocking,
                     )
 
                 # The dialog table above recognises seven known screens. This catches
@@ -463,7 +474,10 @@ class TmuxBackend:
             return SendOutcome(
                 phase="injected",
                 dispatched=True,
-                runtime=self._runtime_of(target_id),
+                # The runtime the gate ADMITTED, not a fresh reading. Re-observing
+                # here would let the receipt name something the guards never saw,
+                # and there is nothing to gain: this value is reported, not checked.
+                runtime=runtime,
                 revision_before=revision_before,
                 revision_after=self._revisions.observe(target_id, after),
             )
