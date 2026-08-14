@@ -216,20 +216,24 @@ class OverrideWordingTests(unittest.TestCase):
             caps,
         )
 
-    def test_the_override_leads_the_sentence(self) -> None:
-        """An operator who hears "ajan aldı ve işledi" has stopped listening.
+    def test_the_override_is_spoken_as_a_thing_to_look_at(self) -> None:
+        """The one deviation that survives the two-state collapse.
 
-        A trailing clause about overruling the host is a footnote on a sentence that
-        already sounded like ordinary success.
+        Enforcement attribution does not change what the operator does, so it is no
+        longer read aloud. This does: something was already staged in that prompt
+        and their text was merged with it, so the pane may not say what they think
+        it says. It is spoken as a consequence, not as an internal tier.
         """
         spoken = self.receipt("host_prompt_check_overridden", HOST_GUARDED_PROMPT_OVERRIDDEN).speak
-        self.assertTrue(spoken.startswith("Host'un"))
-        self.assertIn("geçersiz kıldım", spoken)
-        self.assertIn("sen öyle istedin", spoken)
+        self.assertTrue(spoken.startswith("codex aldı."))
+        self.assertIn("bekleyen metin vardı", spoken)
+        self.assertIn("sen istediğin için", spoken)
+        # And it still must not narrate the enforcement model.
+        self.assertNotIn("host", spoken.lower())
 
-    def test_an_ordinary_host_green_is_unchanged(self) -> None:
+    def test_an_ordinary_green_is_the_short_sentence(self) -> None:
         spoken = self.receipt("", HOST_GUARDED).speak
-        self.assertEqual(spoken, "Ajan aldı ve işledi.")
+        self.assertEqual(spoken, "codex aldı.")
 
 
 class ConfigShapeTests(unittest.TestCase):

@@ -21,6 +21,25 @@ check and the write are two operations rather than one. Reporting it as either
 `client_guarantees` is carried separately from `missing_guarantees`.
 
 Saying all this is the difference between a receipt and a decoration.
+
+WHAT IS SPOKEN IS NARROWER THAN WHAT IS RECORDED, and deliberately so. The three
+statuses, the phase, and the enforcement attribution all stay in `as_dict()`,
+where the model reading the payload, the log, and `doctor` can see them. The
+spoken line collapses to two things a person can act on:
+
+    "codex aldı."                     -> nothing to do, carry on
+    "Gönderilmedi: <sebep>. <çıkış>"  -> the text never left; act
+    "Gönderdim ama ... doğrulayamadım" -> it DID leave; do not resend blindly
+
+That last distinction is the one thing the collapse must not lose. A refusal and
+an unproven delivery both mean "no confirmation", but they call for opposite
+moves: the first can be retried, and retrying the second may deliver the message
+twice. So a YELLOW line never says "tekrar göndereyim mi" — it offers to LOOK.
+
+Enforcement attribution used to be read aloud on every GREEN ("bazı kontrolleri
+host değil bu taraf yaptı"). It is the maintainer's honesty aesthetic and it is
+invisible to the operator: there is no different action behind it. It now lives
+in the payload only.
 """
 
 from __future__ import annotations
@@ -94,33 +113,30 @@ def build_receipt(
     degraded = capabilities.degraded
     client = capabilities.client_enforced
 
+    agent = _agent_name(send.runtime)
+
     if not send.dispatched:
         return Receipt(
             status="RED",
             phase=send.phase,
             accepted=False,
             reason=send.reason or send.phase,
-            speak=_speak_rejected(send.phase, send.reason),
+            speak=_speak_rejected(send.phase, send.reason, agent),
             missing_guarantees=degraded,
             client_guarantees=client,
         )
 
     if acceptance.observed:
-        # Even a proven acceptance says what it could not check, and who did the
-        # checking. A GREEN whose guards were applied here rather than by the host
-        # is still a GREEN — the agent demonstrably processed the text — but the
-        # two are not interchangeable and the sentence must not pretend they are.
         if send.reason == "host_prompt_check_overridden":
-            # The override LEADS. An operator who hears "ajan aldı ve işledi" has
-            # already stopped listening, and a trailing clause about overruling the
-            # host is a footnote on a sentence that sounded like ordinary success.
+            # Spoken because it changes what the operator may want to LOOK at, not
+            # as attribution: something was already staged in that prompt and their
+            # text was merged with it on their own instruction.
             speak = (
-                "Host'un 'prompt dolu' kararını geçersiz kıldım, sen öyle istedin: "
-                "ajan aldı ve işledi. Boş-prompt kontrolünü bu taraf yaptı, "
-                "revision ve token kontrolü host'ta kaldı."
+                f"{agent} aldı. Prompt'ta bekleyen metin vardı, "
+                "sen istediğin için yine de gönderdim."
             )
         else:
-            speak = "Ajan aldı ve işledi." + _speak_guard_caveat(degraded, client)
+            speak = f"{agent} aldı."
         return Receipt(
             status="GREEN",
             phase=send.phase,
@@ -131,32 +147,34 @@ def build_receipt(
             client_guarantees=client,
         )
 
+    # Every YELLOW below says GÖNDERDİM first and offers to LOOK, never to resend.
+    # The text is already in the terminal; a second write is a second message.
     if acceptance.reason == "no_canary":
         return Receipt(
             status="YELLOW",
             phase=send.phase,
             accepted=False,
             reason="acceptance_not_testable",
-            speak="SARI: Metni gönderdim ama ajanın işlediğini doğrulayamadım.",
+            speak=f"Gönderdim ama {agent} aldı mı, doğrulayamadım.",
             missing_guarantees=degraded,
             client_guarantees=client,
         )
 
     if acceptance.pane_changed_recently:
-        # Still YELLOW, and the wording is deliberately about the PANE, not the
-        # agent. A spinner, a clock, a log tail or a second agent sharing the
-        # pane all move the text without the intended agent doing anything, so
-        # "the agent is still working" would be a claim the evidence cannot
-        # carry — the same class of overclaim as speaking YELLOW as GREEN.
+        # The movement clause is deliberately about the TERMINAL, not the agent. A
+        # spinner, a clock, a log tail or a second agent sharing the pane all move
+        # the text without the intended agent doing anything, so "the agent is
+        # still working" would be a claim the evidence cannot carry — the same
+        # class of overclaim as speaking YELLOW as GREEN.
         return Receipt(
             status="YELLOW",
             phase=send.phase,
             accepted=False,
             reason=acceptance.reason or "canary_timeout_pane_moving",
             speak=(
-                "SARI: Terminalde hareket var ama ajanın işlediğine dair kanıt "
-                f"gelmedi; {int(acceptance.waited_seconds)} saniye bekledim. "
-                "Tekrar bakmamı ister misin?"
+                f"Gönderdim, terminalde hareket var ama {agent} aldı mı, "
+                f"doğrulayamadım; {int(acceptance.waited_seconds)} saniye "
+                "bekledim. Bakayım mı?"
             ),
             missing_guarantees=degraded,
             client_guarantees=client,
@@ -168,94 +186,82 @@ def build_receipt(
         accepted=False,
         reason=acceptance.reason or "canary_timeout",
         speak=(
-            "SARI: Gönderdim, terminalde hiç hareket olmadı ve ajanın "
-            "işlediğine dair kanıt gelmedi."
+            f"Gönderdim ama terminalde hiç hareket olmadı; {agent} aldı mı, "
+            "doğrulayamadım. Bakayım mı?"
         ),
         missing_guarantees=degraded,
         client_guarantees=client,
     )
 
 
-def _speak_guard_caveat(
-    degraded: tuple[str, ...], client: tuple[str, ...]
-) -> str:
-    """The caveat a GREEN has to carry, in the operator's words.
+#: What the operator calls the thing they are talking to. The runtime name is
+#: already the word they use out loud — "codex", "claude", "kimi" — so it is
+#: spoken as-is, with no suffix that would need vowel harmony per runtime.
+def _agent_name(runtime: str) -> str:
+    return runtime.strip() or "ajan"
 
-    Three cases rather than two. The old wording had one sentence for "something
-    was unchecked", which would have described a client-enforced guard and an
-    unchecked one identically — the exact collapse that let a stock host's
-    receipt read like the fork's.
+
+def _speak_rejected(phase: str, reason: str = "", agent: str = "ajan") -> str:
+    """One shape: GÖNDERİLMEDİ, why, and the way out.
+
+    The lead word is fixed. A refusal is the one case where the operator can
+    safely retry, and it has to be distinguishable from an unproven delivery by
+    the first word alone — the rest of the sentence may not be heard.
     """
-    if degraded and client:
-        return (
-            " Bazı kontrolleri host değil bu taraf yaptı, bir kontrol de hiç "
-            "yapılmadı."
-        )
-    if client:
-        return (
-            " Kontrolleri host değil bu taraf yaptı; yazmadan hemen önce baktı, "
-            "yazmayı reddedebilecek olan host değildi."
-        )
-    if degraded:
-        return " (bu backend yazmadan önce doğrulayamadığı kontroller var)"
-    return ""
-
-
-def _speak_rejected(phase: str, reason: str = "") -> str:
     if reason == "host_says_occupied_screen_says_empty":
         # Never advise clearing here: it has been measured not to work. The host
         # counts a Codex placeholder suggestion as staged text, and there is
         # nothing in the prompt for a clear to remove.
         return (
-            "Host yazmayı reddetti ama ekranda prompt boş görünüyor; büyük "
-            "olasılıkla ajanın kendi öneri metnini yazılmış sanıyor. Temizlemek "
-            "burada işe yaramaz."
+            "Gönderilmedi: prompt boş görünüyor ama dolu sayılıyor, muhtemelen "
+            f"{agent} kendi öneri metnini yazılmış sanıyor. Temizlemek burada "
+            "işe yaramaz."
         )
     if phase == "rejected_trust_prompt":
         return (
-            "Ajan bir güven onayı ekranında bekliyor; oraya yazmak menüden "
-            "rastgele bir seçenek seçebilirdi, hiçbir şey yazmadım."
+            f"Gönderilmedi: {agent} bir güven onayı ekranında bekliyor, oraya "
+            "yazmak menüden rastgele bir seçenek seçebilirdi."
         )
     if phase == "rejected_auth_prompt":
-        return "Ajan giriş ekranında bekliyor; hiçbir şey yazmadım."
+        return f"Gönderilmedi: {agent} giriş ekranında bekliyor."
     if phase == "rejected_confirm_prompt":
-        return "Ajan bir onay bekliyor; hiçbir şey yazmadım."
+        return f"Gönderilmedi: {agent} bir onay bekliyor."
     if phase == "rejected_prompt_not_empty":
         return (
-            "Prompt alanında bekleyen metin var; hiçbir şey yazmadım. "
-            "İstersen temizleyip tekrar deneyebilirim."
+            "Gönderilmedi: prompt alanında bekleyen metin var. İstersen "
+            "temizleyip tekrar deneyebilirim."
         )
     if phase == "rejected_prompt_unreadable":
         # Previously fell through to the generic line, so a real and specific
         # obstruction - an open menu or overlay - was reported as an unexplained
         # refusal. The information existed and was discarded at the last step.
         return (
-            "Prompt alanı okunamadı, muhtemelen bir menü ya da katman açık; "
-            "hiçbir şey yazmadım. Ne beklediğine bakabilirim."
+            "Gönderilmedi: prompt alanı okunamadı, muhtemelen bir menü ya da "
+            "katman açık. Ne beklediğine bakabilirim."
         )
     if phase == "rejected_not_an_agent":
         # Typing into a shell and pressing Enter is running a command. The pane may
         # have been an agent when it was listed and be a shell now.
         return (
-            "O panelde bir ajan çalışmıyor; oraya yazmak komut çalıştırmak olurdu, "
-            "hiçbir şey göndermedim."
+            "Gönderilmedi: orada bir ajan çalışmıyor, yazsaydım komut "
+            "çalıştırmış olurdum."
         )
     if phase == "duplicate_after_ambiguous_write":
         # NOT "I blocked a repeat": the first attempt may never have arrived.
         return (
-            "Bu mesajın ilk denemesi yarıda kaldı, gidip gitmediği belirsiz; ikinci "
-            "kez yazmadım. Paneli okuyup durumu söyleyebilirim."
+            "Gönderilmedi: bu mesajın ilk denemesi yarıda kaldı, gidip gitmediği "
+            "belirsiz. Paneli okuyup durumu söyleyebilirim."
         )
     if phase == "staged_not_submitted":
         # Observed live: the text reached a Codex composer but two Enters did not
         # submit it. The operator has to know the message is sitting there, or they
         # will believe it was delivered and wait.
         return (
-            "Metni yazdım ama gönderilemedi; prompt'ta duruyor. Enter iki kez "
-            "denendi, kabul edilmedi."
+            "Gönderilmedi: metin prompt'ta duruyor, Enter iki kez denendi ama "
+            "kabul edilmedi."
         )
     if phase.startswith("duplicate_"):
-        return "Aynı mesajın tekrarını engelledim; ikinci kez yazmadım."
+        return "Gönderilmedi: aynı mesajın tekrarıydı, ikinci kez yazmadım."
     if phase == "rejected_revision_changed":
-        return "Terminal değişmiş; güvenli olmadığı için yazmadım."
-    return "Yazma reddedildi; terminale hiçbir şey gitmedi."
+        return "Gönderilmedi: terminal değişmiş, güvenli olmadığı için yazmadım."
+    return "Gönderilmedi: terminale hiçbir şey gitmedi."
