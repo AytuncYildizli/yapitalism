@@ -267,6 +267,15 @@ def _default_manifest_path() -> Path:
     return manifest_write_path()
 
 
+def _existing_binding(path: Path) -> tuple[str, str] | None:
+    """The (workspace, terminal) a manifest already names, if one is there."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return str(payload["workspace_id"]), str(payload["terminal_id"])
+    except (OSError, ValueError, KeyError):
+        return None
+
+
 def superset_setup(args: argparse.Namespace) -> int:
     """Provision a manifest from the Superset install already on this machine.
 
@@ -290,7 +299,10 @@ def superset_setup(args: argparse.Namespace) -> int:
         record = select_host(discover_hosts(), args.organization)
         print(f"host        {record.endpoint}  (organization {record.organization_id})")
         print(f"source      {record.source}  mode 0600, pid {record.pid} alive")
-        binding = probe_binding(record, timeout=args.timeout)
+        # Carry the existing binding into the probe so a token refresh does not
+        # also require a running agent — the failure that makes a rotated token
+        # unrepairable is the one `setup` now tells people to fix.
+        binding = probe_binding(record, timeout=args.timeout, previous=_existing_binding(args.output))
     except ProvisionError as error:
         print(f"cannot provision: {error}")
         return 1

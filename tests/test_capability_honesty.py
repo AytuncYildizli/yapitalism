@@ -89,6 +89,11 @@ def stock_responder(
         if path.endswith("terminal.writeInput"):
             written.append(payload["data"])
             return result({"success": True})
+        if path.endswith("workspace.list"):
+            # Capabilities are gated on a call that authenticates, not merely one
+            # that routes — a stale manifest used to report full guarantees while
+            # every send returned 401.
+            return result([{"id": WORKSPACE, "name": "ws"}])
         if path.endswith("terminal.listSessions"):
             # `agent.runtime`, the shape the host really sends — a flat "runtime"
             # key here would let a guessed field name pass its own test.
@@ -123,6 +128,11 @@ class StockHostCapabilityTests(unittest.TestCase):
             if path.endswith("terminal.send"):
                 # Present, and rejecting the empty probe payload — 400, not 404.
                 return {"__status__": 400}
+            if path.endswith("workspace.list"):
+                # Capabilities are gated on a call that AUTHENTICATES, not just one
+                # that routes: `procedure_exists` treats 401 as "present", so a stale
+                # manifest used to report host/host/host while every send 401'd.
+                return result([{"id": WORKSPACE, "name": "ws"}])
             raise AssertionError(f"unexpected procedure: {path}")
 
         with FakeTrpcServer(responder) as server, tempfile.TemporaryDirectory() as tmp:
@@ -144,6 +154,8 @@ class StockHostCapabilityTests(unittest.TestCase):
             if path.endswith("terminal.send"):
                 probes.append(path)
                 return {"__status__": 400}
+            if path.endswith("workspace.list"):
+                return result([{"id": WORKSPACE, "name": "ws"}])
             raise AssertionError(f"unexpected procedure: {path}")
 
         with FakeTrpcServer(responder) as server, tempfile.TemporaryDirectory() as tmp:

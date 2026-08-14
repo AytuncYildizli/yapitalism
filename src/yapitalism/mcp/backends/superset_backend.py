@@ -175,7 +175,13 @@ class SupersetBackend:
         try:
             adapter = self._connect()
             guarded = adapter.host_enforces_send_guards()
-        except BackendError:
+            # Routing a procedure is not the same as accepting our credential:
+            # `procedure_exists` treats 401 as "present", correctly, because tRPC
+            # routes before it authenticates. So the guarantees have to be gated on
+            # a call that actually authenticates - otherwise a stale manifest still
+            # reported host/host/host while every send returned 401.
+            adapter.list_workspaces()
+        except (BackendError, TrpcError, ValueError):
             return UNKNOWN_HOST
         return HOST_GUARDED if guarded else CLIENT_GUARDED
 

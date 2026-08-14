@@ -29,13 +29,14 @@ NO_SUPERSET = SupersetFacts(
 )
 
 
-def superset(build: str) -> SupersetFacts:
+def superset(build: str, *, credentials_ok: bool = True) -> SupersetFacts:
     return SupersetFacts(
         app_installed=True,
         host_live=True,
         build=build,
         organization_id="org-1",
         detail=f"host live at http://127.0.0.1:48900/trpc ({build} build)",
+        credentials_ok=credentials_ok,
     )
 
 
@@ -76,6 +77,45 @@ class UsableBackendTests(unittest.TestCase):
             environment(sup=superset("guarded"), manifest_written=True).usable_backends,
             ("superset",),
         )
+
+
+class StaleCredentialTests(unittest.TestCase):
+    """A manifest on disk is not a working credential.
+
+    Superset rotates its own auth token; the manifest is a copy taken at
+    provisioning time. A report built from the host's FRESH token said "healthy"
+    while every send returned 401 — a health check that does not use the credential
+    the product uses is not checking the product.
+    """
+
+    def test_a_stale_credential_makes_the_backend_unusable(self) -> None:
+        env = environment(sup=superset("guarded", credentials_ok=False), manifest_written=True)
+        self.assertEqual(env.usable_backends, ())
+
+    def test_no_guarantees_are_shown_for_a_host_that_refuses_us(self) -> None:
+        """Listing host/host/host while every call 401s is the "installed
+        successfully" report this command exists to replace."""
+        env = environment(sup=superset("guarded", credentials_ok=False), manifest_written=True)
+        self.assertEqual(capabilities_for(env), {})
+        self.assertNotIn("registry", "\n".join(render_setup(env)))
+
+    def test_the_advice_names_the_command_and_the_reason(self) -> None:
+        steps = next_steps(
+            environment(
+                agents={"codex": True, "claude": False, "kimi": False},
+                sup=superset("guarded", credentials_ok=False),
+                manifest_written=True,
+                clients=(ClientFacts("Codex", Path("/tmp/c.toml"), True, "http"),),
+            )
+        )
+        self.assertEqual(len(steps), 1)
+        self.assertIn("--force", steps[0])
+        # "Re-run setup" without the reason reads like superstition the second time.
+        self.assertIn("rotated its token", steps[0])
+
+    def test_a_working_credential_restores_the_row(self) -> None:
+        env = environment(sup=superset("guarded"), manifest_written=True)
+        self.assertEqual(env.usable_backends, ("superset",))
 
 
 class CapabilityTableTests(unittest.TestCase):

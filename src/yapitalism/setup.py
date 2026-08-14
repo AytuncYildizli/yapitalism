@@ -24,7 +24,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .adapters.superset import SupersetAdapter, SupersetConfig
+from .adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
 from .adapters.superset.provision import HostRecord, ProvisionError, discover_hosts, select_host
 from .mcp.backends.base import BackendCapabilities
 
@@ -54,6 +54,14 @@ class SupersetFacts:
     build: str
     organization_id: str
     detail: str
+    #: Whether the manifest THIS TOOL loads is accepted by that host right now.
+    #:
+    #: Separate from `host_live` because they came apart in practice: Superset
+    #: rotates its own auth token, our cached manifest keeps the old one, and a
+    #: report built from the host's fresh token said "healthy" while every send
+    #: got 401. A health check that does not use the credential the product uses
+    #: is not checking the product.
+    credentials_ok: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +94,10 @@ class Environment:
         usable: list[str] = []
         if self.tmux.installed and self.tmux.server_running:
             usable.append("tmux")
-        if self.superset.host_live and self.manifest_written:
+        # A manifest on disk is not a working credential. Listing a backend whose
+        # every call returns 401 is the "installed successfully" report this whole
+        # command exists to replace.
+        if self.superset.host_live and self.manifest_written and self.superset.credentials_ok:
             usable.append("superset")
         return tuple(usable)
 
@@ -151,12 +162,48 @@ def detect_superset() -> tuple[SupersetFacts, HostRecord | None]:
     )
     guarded = adapter.host_enforces_send_guards()
     build = "guarded" if guarded else "stock"
-    detail = (
-        f"host live at {record.endpoint} ({build} build)"
-        if app
-        else f"host live at {record.endpoint} ({build} build), app not in /Applications"
+    credentials_ok, credential_note = _manifest_still_accepted()
+    where = "" if app else ", app not in /Applications"
+    if credentials_ok:
+        detail = f"host live at {record.endpoint} ({build} build){where}"
+    else:
+        # The important half of the sentence goes first: the host being up is not
+        # the answer to "can this tool talk to it".
+        detail = f"{credential_note} — host is up at {record.endpoint} ({build} build){where}"
+    return (
+        SupersetFacts(
+            app, True, build, record.organization_id, detail, credentials_ok=credentials_ok
+        ),
+        record,
     )
-    return SupersetFacts(app, True, build, record.organization_id, detail), record
+
+
+def _manifest_still_accepted() -> tuple[bool, str]:
+    """Make one real authenticated call with the manifest this tool loads.
+
+    Not the host record's token — that one is always current, because Superset
+    rewrites it. The manifest is a COPY taken at provisioning time, and when the
+    host rotates its token the copy goes stale silently. Checking the fresh token
+    proves the host is alive and proves nothing about us.
+
+    `workspace.list` is the cheapest authenticated read: no target binding, no
+    write, and it fails 401 exactly when the credential has gone stale.
+    """
+    from .mcp.backends.superset_backend import resolve_manifest_path
+
+    manifest = resolve_manifest_path()
+    if not manifest.exists():
+        return False, "no manifest yet"
+    try:
+        adapter = SupersetAdapter(SupersetConfig.from_manifest(manifest))
+        adapter.list_workspaces()
+    except (ValueError, OSError) as error:
+        return False, f"manifest unusable ({error})"
+    except TrpcError as error:
+        if "401" in str(error) or "403" in str(error):
+            return False, "manifest credential is stale; the host rotated its token"
+        return False, f"host did not answer this manifest ({error})"
+    return True, ""
 
 
 #: Where the clients this tool has been used with keep their MCP config, and how
@@ -226,6 +273,13 @@ def next_steps(env: Environment) -> list[str]:
         )
     if env.superset.host_live and not env.manifest_written:
         steps.append(f"yapitalism superset setup --confirm    # writes {env.manifest_path}")
+    elif env.superset.host_live and not env.superset.credentials_ok:
+        # Names the command AND why, because "re-run setup" without the reason
+        # reads like superstition the second time it happens.
+        steps.append(
+            "yapitalism superset setup --confirm --force    # the host rotated its "
+            "token and the saved manifest still has the old one"
+        )
     if not env.tmux.installed and not env.superset.host_live:
         steps.append("install tmux, or start Superset — both backends are absent")
     if not any(client.present for client in env.clients):
