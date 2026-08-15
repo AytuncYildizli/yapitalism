@@ -26,6 +26,7 @@ from uuid import uuid4
 
 from fastmcp import FastMCP
 
+from .. import __version__
 from .backends.base import AGENT_RUNTIMES, AcceptanceOutcome, BackendError
 from .backends.superset_backend import SupersetBackend
 from .backends.tmux_backend import TmuxBackend
@@ -47,7 +48,12 @@ DEFAULT_HOST = "127.0.0.1"
 # 8787 belongs to the launchd-managed mahmory-api; 8791 was also taken.
 DEFAULT_PORT = 8792
 
-mcp: FastMCP = FastMCP("yapitalism")
+#: `version` is not decoration: it is the answer to "which yapitalism am I talking
+#: to", the first question anyone debugging a client asks. Left unset, FastMCP fills
+#: serverInfo with its OWN version, so a 0.2.1 server introduced itself as 3.4.7 —
+#: a number matching no release of this project, and one that changes when a
+#: dependency updates.
+mcp: FastMCP = FastMCP("yapitalism", version=__version__)
 # Superset is registered unconditionally. Constructing it reads no files, and a
 # missing or unusable manifest surfaces as a per-backend error in panes_list
 # rather than preventing the server from starting or hiding tmux.

@@ -6,6 +6,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-08-15
+
+Both of the places this project states its own version were wrong, and both were
+found by installing 0.2.1 from PyPI and asking it.
+
+### Fixed
+
+- **The MCP handshake advertised FastMCP's version, not this project's.** `serverInfo`
+  came back as `3.4.7` from a 0.2.1 server — a number matching no release of
+  Yapitalism, and one that moves whenever a dependency updates. `FastMCP(...)` was
+  constructed without `version`, so it filled the field with its own. It is the first
+  question anyone debugging a client asks, and the answer was a different project's.
+- **`yapitalism.__version__` reported `0.1.0.dev0`.** A hand-written literal, three
+  releases stale. Nothing failed when it drifted and nothing read it back, which is
+  why it drifted. Both surfaces now derive from the installed distribution, so the
+  only version any of them can report is the wheel's own.
+
+### Added
+
+- Tests that fail if either surface grows a literal again, if `serverInfo` starts
+  agreeing with FastMCP's version, or if `pyproject.toml`, `server.json` (which
+  carries it twice) and this changelog stop agreeing.
+
 ## [0.2.1] - 2026-08-14
 
 The tmux path was run end to end for the first time and did not work. Everything
