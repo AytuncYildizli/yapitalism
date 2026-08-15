@@ -185,19 +185,61 @@ class RealSessionTests(unittest.TestCase):
         else:
             os.environ["YAPITALISM_TMUX_SOCKET"] = cls._previous_socket
 
-    def test_a_missing_binary_yields_created_but_unconfirmed(self) -> None:
-        """The honest-reporting path, forced deterministically.
+    def test_an_uninstalled_agent_is_refused_before_anything_is_created(self) -> None:
+        """Measured on a clean box, and it was unreadable.
 
-        `AGENT_LAUNCHERS` is patched to a name that cannot exist, which is what
-        a machine without the agent installed looks like. tmux still makes the
-        session, so the caller must be told it exists AND that nothing runs in
-        it — reporting only "created" would leave an orphan nobody cleans up.
+        `panes_create codex` with no codex installed made a session, the pane died
+        at once, tmux exited for want of sessions, and the operator was handed
+        "no server running on /tmp/tmux-0/default" — a socket path, for a missing
+        program. Nothing in that sentence points at the cause or the fix.
+
+        Asking PATH first also means nothing is created, so there is no orphan to
+        report in the first place. The launcher name comes from the closed
+        `AGENT_LAUNCHERS` table, never from the caller, so this cannot become a
+        probe for arbitrary binaries.
         """
+        from unittest import mock
+
+        from yapitalism.mcp.backends.base import BackendError
+        from yapitalism.mcp.backends.tmux_backend import TmuxBackend
+
+        fake = dict(AGENT_LAUNCHERS, codex=("yapitalism-no-such-binary",))
+        with mock.patch.dict(
+            "yapitalism.mcp.tmux.AGENT_LAUNCHERS", fake, clear=True
+        ):
+            with self.assertRaises(BackendError) as caught:
+                TmuxBackend().create_pane("yap-missing", "codex", "/tmp", timeout=1.5)
+        message = str(caught.exception)
+        self.assertIn("codex is not installed", message)
+        self.assertIn("nothing was started", message)
+        # And it must be true: no session by that name exists. `list-sessions`
+        # errors when no server is running at all, which is itself proof.
+        listed = tmux("list-sessions", "-F", "#{session_name}")
+        self.assertNotIn("yap-missing", listed.stdout)
+
+    def test_a_binary_that_dies_at_once_is_created_but_unconfirmed(self) -> None:
+        """The orphan-reporting path, which the PATH check above does NOT cover.
+
+        A launcher can be perfectly installed and still fail the moment it runs —
+        wrong version, missing config, crash on start. tmux returns a pane id as
+        soon as the session exists, which is before the agent has execed, so the
+        caller must be told the session is there AND that nothing runs in it.
+        Reporting only "created" would leave an orphan nobody cleans up.
+
+        `false` stands in for that: on PATH everywhere, exits immediately. The old
+        version of this test used a name that could not exist, which conflated "you
+        never installed it" with "it started and died" — two different sentences
+        for the operator, and only one of them leaves a session behind.
+        """
+        import shutil
         from unittest import mock
 
         from yapitalism.mcp.backends.tmux_backend import TmuxBackend
 
-        fake = dict(AGENT_LAUNCHERS, codex=("yapitalism-no-such-binary",))
+        dies_at_once = shutil.which("false")
+        self.assertIsNotNone(dies_at_once, "no `false` on PATH to stand in with")
+
+        fake = dict(AGENT_LAUNCHERS, codex=(dies_at_once,))
         with mock.patch.dict(
             "yapitalism.mcp.tmux.AGENT_LAUNCHERS", fake, clear=True
         ):

@@ -6,6 +6,54 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-08-15
+
+Everything here was found by running the tool on a machine that has nothing:
+`python:3.11-slim` plus `tmux`, no agent CLIs, no Superset, none of this project's
+own configuration. That is what a stranger installing it actually has, and until
+now nobody had looked. It was also the first run on Python 3.11 at all — every
+prior measurement was on 3.14.
+
+Three defects, and each one hit the first thing a new user does.
+
+### Fixed
+
+- **`panes_list` reported `ok: false` on every machine without Superset** — which
+  is nearly every machine. The Superset backend raised on each call because no
+  manifest existed, `ok` was computed as "no backend errored", and so a call that
+  had found the tmux panes perfectly, and returned them in the same response, still
+  came back as a failure. Absence is now its own answer: a backend this machine
+  does not have appears under `unconfigured` and does not touch `ok`. A backend
+  that IS set up and then breaks is still an error, because that one is real.
+- **A missing manifest was described as an unsafe file.** With no Superset
+  installed the error read `superset manifest unusable: Superset manifest is not a
+  safe readable regular file` — the wording for a file that exists and cannot be
+  trusted, applied to one that was never created. It reads like a security problem.
+  It now says Superset is not set up on this machine and names the command to fix
+  it if you have the app. A *dangling symlink* still reports as a failure: something
+  is there and it is wrong.
+- **`panes_create` failed with a socket path when the agent was not installed.**
+  Asking for `codex` on a box without codex made a session, the pane died at once,
+  tmux exited for want of sessions, and the operator was handed `no server running
+  on /tmp/tmux-0/default`. Nothing in that sentence points at the cause or the fix.
+  PATH is now checked first — against the closed launcher table, never a
+  caller-supplied name — so the answer is `codex is not installed — nothing was
+  started`, and nothing is.
+- **`tmux` with no server yet was an error.** A fresh machine has no tmux server
+  until something starts one; that state surfaced as raw tmux stderr. An empty pane
+  list is the honest answer. `tmux is not installed` still reports, as absence.
+
+### Changed
+
+- `panes_list` responses may now carry `unconfigured`. It is informational and
+  deliberately dull — the tool's own docstring tells the model not to read it aloud
+  or offer to fix it unless asked what is missing.
+
+297 tests, up from 294. The one covering "a missing binary yields created but
+unconfirmed" was split: it had conflated *never installed* with *started and died*,
+which are different sentences for the operator, and only the second leaves a session
+behind.
+
 ## [0.2.2] - 2026-08-15
 
 Both of the places this project states its own version were wrong, and both were

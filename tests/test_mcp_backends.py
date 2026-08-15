@@ -113,7 +113,7 @@ class RegistryTests(unittest.TestCase):
                 FakeBackend("tmux", [pane("tmux:%0")], strong=False),
             ]
         )
-        panes, errors = registry.list_all()
+        panes, errors, _absent = registry.list_all()
         self.assertEqual(errors, [])
         by_id = {p["target_id"]: p for p in panes}
         # The strong backend claims nothing extra...
@@ -128,7 +128,7 @@ class RegistryTests(unittest.TestCase):
                 FakeBackend("tmux", [pane("tmux:%0")], strong=False),
             ]
         )
-        panes, errors = registry.list_all()
+        panes, errors, _absent = registry.list_all()
         self.assertEqual([p["target_id"] for p in panes], ["tmux:%0"])
         # An empty list from a broken backend would read as "no terminals
         # there", which is a different claim from "I could not look".
@@ -164,14 +164,65 @@ class SupersetBackendTests(unittest.TestCase):
         # asserted in test_capability_honesty, against a host that answers.
         self.assertEqual(TmuxBackend().capabilities().runtime_detection, "process_tree")
 
-    def test_missing_manifest_is_a_backend_error_not_a_crash(self) -> None:
+    def test_no_manifest_at_all_is_absence_not_a_failure(self) -> None:
+        """The common case, and it used to read like a security problem.
+
+        Almost nobody runs Superset, so "no manifest" is the normal state of a
+        normal machine. It surfaced as "manifest unusable: ... is not a safe
+        readable regular file" — the wording for a file that exists and cannot be
+        trusted — and it turned every `panes_list` into `ok: false` on machines
+        where tmux had answered perfectly.
+        """
+        from yapitalism.mcp.backends.base import BackendUnavailable
         from yapitalism.mcp.backends.superset_backend import SupersetBackend
 
         backend = SupersetBackend(manifest_path="/nonexistent/manifest.json")
-        with self.assertRaisesRegex(BackendError, "manifest unusable"):
+        with self.assertRaises(BackendUnavailable) as caught:
             backend.list_panes()
+        # Still a BackendError, so nothing that catches the base class breaks.
+        self.assertIsInstance(caught.exception, BackendError)
+        self.assertIn("not set up on this machine", str(caught.exception))
 
-    def test_a_broken_superset_backend_does_not_hide_tmux_panes(self) -> None:
+    def test_a_manifest_that_exists_and_is_unusable_is_still_a_failure(self) -> None:
+        """Absence is the only thing demoted. A present, broken manifest is broken.
+
+        Demoting this one too would be the older mistake pointed the other way:
+        the operator has Superset, something about it is wrong, and `ok` must say so.
+        """
+        import os
+        import tempfile
+
+        from yapitalism.mcp.backends.base import BackendUnavailable
+        from yapitalism.mcp.backends.superset_backend import SupersetBackend
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "manifest.json")
+            with open(path, "w") as handle:
+                handle.write("not json at all")
+            os.chmod(path, 0o600)
+            backend = SupersetBackend(manifest_path=path)
+            with self.assertRaises(BackendError) as caught:
+                backend.list_panes()
+            self.assertIn("manifest unusable", str(caught.exception))
+            self.assertNotIsInstance(caught.exception, BackendUnavailable)
+
+    def test_a_dangling_symlink_is_a_failure_not_absence(self) -> None:
+        """`lexists`, not `exists`: something IS there and it is wrong."""
+        import os
+        import tempfile
+
+        from yapitalism.mcp.backends.base import BackendUnavailable
+        from yapitalism.mcp.backends.superset_backend import SupersetBackend
+
+        with tempfile.TemporaryDirectory() as tmp:
+            link = os.path.join(tmp, "manifest.json")
+            os.symlink(os.path.join(tmp, "gone.json"), link)
+            backend = SupersetBackend(manifest_path=link)
+            with self.assertRaises(BackendError) as caught:
+                backend.list_panes()
+            self.assertNotIsInstance(caught.exception, BackendUnavailable)
+
+    def test_an_absent_superset_neither_hides_tmux_nor_fails_the_call(self) -> None:
         from yapitalism.mcp.backends.superset_backend import SupersetBackend
 
         registry = BackendRegistry(
@@ -180,10 +231,13 @@ class SupersetBackendTests(unittest.TestCase):
                 FakeBackend("tmux", [pane("tmux:%0")], strong=False),
             ]
         )
-        panes, errors = registry.list_all()
+        panes, errors, absent = registry.list_all()
         self.assertEqual([p["target_id"] for p in panes], ["tmux:%0"])
-        self.assertEqual(len(errors), 1)
-        self.assertEqual(errors[0]["backend"], "superset")
+        # A Superset that was never set up is ABSENT, not failed — so it must not
+        # land in `errors`, where it would make `ok` false on a machine that just
+        # answered the question correctly.
+        self.assertEqual(errors, [])
+        self.assertEqual([a["backend"] for a in absent], ["superset"])
 
 if __name__ == "__main__":
     unittest.main()
