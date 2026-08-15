@@ -33,6 +33,23 @@ class BackendError(RuntimeError):
     """A backend could not answer. Never raised to claim success."""
 
 
+class BackendUnavailable(BackendError):
+    """This backend is not set up on this machine. Absence, not failure.
+
+    The distinction is the difference between "something is wrong" and "you do
+    not have that". Measured on a clean box: with no Superset installed, the
+    Superset backend raised `superset manifest unusable: ... is not a safe
+    readable regular file` on every call, which read like a security problem and
+    turned every `panes_list` into `ok: false` — while tmux had answered
+    perfectly and the panes were right there in the payload. Everyone who does
+    not run the Superset fork, which is everyone, saw a failed first call.
+
+    Raised only when the backend was never configured here. A backend that IS
+    configured and then breaks stays a plain `BackendError`, because that one is
+    a failure and hiding it would be the older mistake pointed the other way.
+    """
+
+
 #: The host refuses the write itself. Strongest: the check and the write are one
 #: operation, so nothing can slip between them.
 HOST = "host"

@@ -5,6 +5,7 @@ from __future__ import annotations
 from .backends.base import (
     BackendError,
     BackendPane,
+    BackendUnavailable,
     TerminalBackend,
     parse_target_id,
 )
@@ -43,26 +44,39 @@ class BackendRegistry:
             raise BackendError(f"no backend for '{namespace}'; registered: {known}")
         return backend
 
-    def list_all(self) -> tuple[list[dict[str, object]], list[dict[str, str]]]:
-        """Panes from every backend, plus per-backend errors.
+    def list_all(
+        self,
+    ) -> tuple[list[dict[str, object]], list[dict[str, str]], list[dict[str, str]]]:
+        """Panes from every backend, plus what failed and what is simply absent.
 
         One failing backend must not hide the others, and it must not be
         silently omitted either — an empty list from a broken backend reads as
         "no terminals there", which is a different claim from "I could not look".
+
+        Absence is a THIRD answer, and collapsing it into the second was measured
+        to be the more common lie: on a machine with no Superset — nearly every
+        machine — the Superset backend reported an error on every call, so a
+        `panes_list` that had found the tmux panes perfectly still came back
+        `ok: false`. "You do not have that" and "that is broken" are not the same
+        sentence, and only one of them is anybody's problem.
         """
         panes: list[dict[str, object]] = []
         errors: list[dict[str, str]] = []
+        unconfigured: list[dict[str, str]] = []
         for namespace in self.namespaces:
             backend = self._backends[namespace]
             try:
                 found = backend.list_panes()
+            except BackendUnavailable as absent:
+                unconfigured.append({"backend": namespace, "detail": str(absent)})
+                continue
             except BackendError as error:
                 errors.append({"backend": namespace, "error": str(error)})
                 continue
             capabilities = backend.capabilities()
             for pane in found:
                 panes.append(_pane_payload(pane, namespace, capabilities.degraded))
-        return panes, errors
+        return panes, errors, unconfigured
 
 
 def _pane_payload(

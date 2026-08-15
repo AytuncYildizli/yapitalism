@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 
@@ -146,8 +147,30 @@ def _process_table() -> list[tuple[int, int, str]]:
     return parse_ps_table(completed.stdout)
 
 
+#: What tmux says when no server has been started yet. Not a failure: tmux is
+#: installed and working, there is simply nothing running. It reached the operator
+#: as a raw socket path — "error connecting to /tmp/tmux-0/default (No such file or
+#: directory)" — which is the shape of something broken, on the most common state a
+#: fresh machine can be in.
+_NO_SERVER = ("no server running on", "error connecting to")
+
+
+def _no_server_yet(message: str) -> bool:
+    lowered = message.lower()
+    return any(phrase in lowered for phrase in _NO_SERVER)
+
+
 def list_panes() -> list[TmuxPane]:
-    raw = _run(["list-panes", "-a", "-F", "\t".join(_PANE_FIELDS)])
+    try:
+        raw = _run(["list-panes", "-a", "-F", "\t".join(_PANE_FIELDS)])
+    except TmuxError as error:
+        if _no_server_yet(str(error)):
+            # An empty list is the honest answer, and it is not the "empty list from
+            # a broken backend" this project refuses elsewhere: nothing failed, and
+            # there is genuinely nothing to list. `tmux is not installed` still
+            # raises, because that IS the caller's problem to hear about.
+            return []
+        raise
     processes = _process_table()
     panes: list[TmuxPane] = []
     for line in raw.splitlines():
@@ -216,6 +239,18 @@ def build_new_session_args(
     if launcher is None:
         known = ", ".join(sorted(AGENT_LAUNCHERS))
         raise TmuxError(f"unknown runtime {runtime!r}; known runtimes: {known}")
+    # Asked BEFORE tmux is, because the failure is otherwise unrecognisable.
+    # Measured on a clean box: `panes_create codex` with no codex installed
+    # created a session, the pane died instantly, tmux exited for want of
+    # sessions, and the operator was handed "no server running on
+    # /tmp/tmux-0/default" — a socket path, for a missing program. The launcher
+    # name comes from the closed table above and never from the caller, so this
+    # cannot be turned into a probe for arbitrary binaries.
+    if shutil.which(launcher[0]) is None:
+        raise TmuxError(
+            f"{runtime} is not installed — nothing was started. "
+            f"Install it and make sure `{launcher[0]}` is on PATH."
+        )
     if not isinstance(width, int) or not 20 <= width <= 1000:
         raise TmuxError("width must be between 20 and 1000")
     if not isinstance(height, int) or not 5 <= height <= 1000:

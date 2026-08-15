@@ -98,16 +98,28 @@ def panes_list() -> dict[str, object]:
     panes and a backend that failed are different claims — do not report "no
     terminals" while `errors` is non-empty.
 
+    `unconfigured` is a third and much duller thing: a backend this machine does
+    not have. Almost nobody runs Superset, so its absence is the normal state and
+    NOT a problem to report. Do not read it out, do not describe it as an error,
+    and do not offer to fix it unless the operator asks what is missing. `ok`
+    ignores it entirely.
+
     This is the local machine. Superset's `terminals_*` tools address
     Superset-managed PTYs instead.
     """
-    panes, errors = registry.list_all()
-    return {
+    panes, errors, unconfigured = registry.list_all()
+    payload: dict[str, object] = {
+        # Absence deliberately does not count. This was `not errors` with absence
+        # folded into errors, so every machine without Superset got `ok: false`
+        # while the tmux panes it asked for sat in the same response.
         "ok": not errors,
         "backends": list(registry.namespaces),
         "panes": panes,
         "errors": errors,
     }
+    if unconfigured:
+        payload["unconfigured"] = unconfigured
+    return payload
 
 
 @mcp.tool

@@ -31,6 +31,7 @@ from .base import (
     BackendCapabilities,
     BackendError,
     BackendPane,
+    BackendUnavailable,
     SendOutcome,
 )
 
@@ -190,6 +191,22 @@ class SupersetBackend:
         # missing manifest must surface as a backend error rather than stop the
         # whole server from starting.
         if self._adapter is None:
+            # No manifest at all is ABSENCE, and it is the common case: almost
+            # nobody runs Superset. It used to reach the operator as "superset
+            # manifest unusable: ... is not a safe readable regular file" — the
+            # wording for a file that exists and cannot be trusted, applied to one
+            # that was simply never created. It read like a security problem, and it
+            # made `panes_list` answer `ok: false` on every machine without
+            # Superset, with the tmux panes sitting right there in the payload.
+            #
+            # `lexists`, not `exists`: a DANGLING symlink is a real misconfiguration
+            # and stays an error. Only "nothing is there" counts as absence.
+            if not os.path.lexists(self._manifest_path):
+                raise BackendUnavailable(
+                    "Superset is not set up on this machine — no manifest at "
+                    f"{self._manifest_path}. Run `yapitalism setup` if you have "
+                    "the Superset app."
+                )
             try:
                 self._adapter = SupersetAdapter(
                     SupersetConfig.from_manifest(self._manifest_path)

@@ -49,6 +49,7 @@ from .base import (
     BackendCapabilities,
     BackendError,
     BackendPane,
+    BackendUnavailable,
     CreateOutcome,
     SendOutcome,
 )
@@ -159,6 +160,14 @@ class TmuxBackend:
         try:
             panes = list_panes()
         except TmuxError as error:
+            # tmux missing is absence, like a Superset that was never set up: the
+            # operator has not got that backend, and calling it a failure makes an
+            # ordinary machine look broken. Anything else — a timeout, a refusal, an
+            # unparseable answer — is a real failure and stays one.
+            if "not installed" in str(error):
+                raise BackendUnavailable(
+                    "tmux is not installed on this machine"
+                ) from None
             raise BackendError(str(error)) from None
         return [
             BackendPane(
