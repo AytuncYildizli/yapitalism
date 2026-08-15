@@ -221,6 +221,33 @@ def validate_session_name(name: str) -> str:
     return name
 
 
+def require_installed(runtime: str) -> None:
+    """Refuse a runtime whose binary is not on PATH, before anything is started.
+
+    Deliberately NOT part of `build_new_session_args`. That function is the
+    security boundary and is pure on purpose — its tests assert on argv without
+    launching anything, on machines (CI included) where no agent is installed.
+    Putting an environment probe inside it made those tests unable to build argv
+    at all. Construction and the state of the machine are separate questions.
+
+    Called from the two functions that actually launch. Measured on a clean box:
+    `panes_create codex` with no codex made a session, the pane died at once, tmux
+    exited for want of sessions, and the operator was handed "no server running on
+    /tmp/tmux-0/default" — a socket path, for a missing program.
+
+    The launcher name comes from the closed `AGENT_LAUNCHERS` table and never from
+    the caller, so this cannot be turned into a probe for arbitrary binaries.
+    """
+    launcher = AGENT_LAUNCHERS.get(runtime)
+    if launcher is None:
+        return  # not our refusal to make; the builders name the known runtimes
+    if shutil.which(launcher[0]) is None:
+        raise TmuxError(
+            f"{runtime} is not installed — nothing was started. "
+            f"Install it and make sure `{launcher[0]}` is on PATH."
+        )
+
+
 def build_new_session_args(
     session_name: str,
     runtime: str,
@@ -239,18 +266,6 @@ def build_new_session_args(
     if launcher is None:
         known = ", ".join(sorted(AGENT_LAUNCHERS))
         raise TmuxError(f"unknown runtime {runtime!r}; known runtimes: {known}")
-    # Asked BEFORE tmux is, because the failure is otherwise unrecognisable.
-    # Measured on a clean box: `panes_create codex` with no codex installed
-    # created a session, the pane died instantly, tmux exited for want of
-    # sessions, and the operator was handed "no server running on
-    # /tmp/tmux-0/default" — a socket path, for a missing program. The launcher
-    # name comes from the closed table above and never from the caller, so this
-    # cannot be turned into a probe for arbitrary binaries.
-    if shutil.which(launcher[0]) is None:
-        raise TmuxError(
-            f"{runtime} is not installed — nothing was started. "
-            f"Install it and make sure `{launcher[0]}` is on PATH."
-        )
     if not isinstance(width, int) or not 20 <= width <= 1000:
         raise TmuxError("width must be between 20 and 1000")
     if not isinstance(height, int) or not 5 <= height <= 1000:
@@ -331,6 +346,7 @@ def new_resumed_session(
     from .resume import resume_argv_for
 
     args = build_resume_session_args(session_name, runtime, cwd, session_id, width, height)
+    require_installed(runtime)
     plan = resume_argv_for(runtime, session_id)
     assert plan is not None  # build_resume_session_args already refused otherwise
     pane_id = _run(args).strip()
@@ -348,6 +364,7 @@ def new_agent_session(
 ) -> str:
     """Create a detached session running one known agent. Returns its target id."""
     args = build_new_session_args(session_name, runtime, cwd, width, height)
+    require_installed(runtime)
     pane_id = _run(args).strip()
     if not re.fullmatch(r"%\d+", pane_id):
         raise TmuxError(f"tmux did not report a usable pane id: {pane_id[:80]!r}")
