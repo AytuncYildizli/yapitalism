@@ -31,7 +31,12 @@ from yapitalism.mcp.backends.superset_backend import (
 from yapitalism.mcp.receipt import build_receipt
 
 from test_capability_honesty import TERMINAL, WORKSPACE, write_manifest
-from test_superset_adapter import FakeTrpcServer, result, snapshot_result
+from test_superset_adapter import (
+    FakeTrpcServer,
+    guarded_send_probe,
+    result,
+    snapshot_result,
+)
 
 PLACEHOLDER = "output\n\n› Use /skills to list available skills"
 REAL_TEXT = "output\n\n› half a typed thought"
@@ -49,12 +54,14 @@ def host(
     def responder(method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if path.endswith("terminal.snapshot"):
             return snapshot_result(text=screen, revision=7)
-        if path.endswith("terminal.listSessions"):
-            return result(
-                {"sessions": [{"terminalId": TERMINAL, "agent": {"runtime": runtime}}]}
-            )
+        if path.endswith("terminal.list"):
+            return result({"sessions": [{"terminalId": TERMINAL, "workspaceId": WORKSPACE}]})
+        if path.endswith("terminalAgents.listByWorkspace"):
+            return result([{"terminalId": TERMINAL, "agentId": runtime}])
         if path.endswith("workspace.list"):
             return result([{"id": WORKSPACE, "name": "ws"}])
+        if path.endswith("terminal.send") and not payload.get("terminalId"):
+            return guarded_send_probe()
         if path.endswith("terminal.send"):
             sends.append(payload)
             first = len(sends) == 1
@@ -157,10 +164,14 @@ class OverrideFenceTests(unittest.TestCase):
             def responder(method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
                 if path.endswith("terminal.snapshot"):
                     return snapshot_result(text=PLACEHOLDER, revision=7)
-                if path.endswith("terminal.listSessions"):
-                    return result({"sessions": [{"terminalId": TERMINAL, "agent": {"runtime": "codex"}}]})
+                if path.endswith("terminal.list"):
+                    return result({"sessions": [{"terminalId": TERMINAL, "workspaceId": WORKSPACE}]})
+                if path.endswith("terminalAgents.listByWorkspace"):
+                    return result([{"terminalId": TERMINAL, "agentId": "codex"}])
                 if path.endswith("workspace.list"):
                     return result([{"id": WORKSPACE, "name": "ws"}])
+                if path.endswith("terminal.send") and not payload.get("terminalId"):
+                    return guarded_send_probe()
                 if path.endswith("terminal.send"):
                     sends.append(payload)
                     return result(

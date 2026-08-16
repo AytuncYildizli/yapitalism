@@ -286,13 +286,16 @@ def probe_binding(
             terminal_id = session.get("terminalId")
             if not isinstance(terminal_id, str) or not terminal_id:
                 continue
-            # The runtime is nested under `agent`, not flat on the session. The
-            # first version of this read `session["runtime"]` - a guessed name -
-            # and reported "no agent terminal" against a host running 22 of them.
-            # `SupersetBackend.list_panes` already knew the shape; the fix was to
-            # read that rather than invent a key.
+            # `agentId`, from the binding `list_terminals` attaches as `agent`.
+            #
+            # Third name tried for this one value. It was `session["runtime"]`,
+            # then `agent["runtime"]`, and both were reasoned about rather than
+            # read - each reported "no agent terminal" against a host running
+            # plenty. The host's own word is `agentId`, on
+            # `terminalAgents.listByWorkspace`, and it was found by asking the
+            # host instead of the code.
             agent = session.get("agent")
-            runtime = agent.get("runtime") if isinstance(agent, dict) else None
+            runtime = agent.get("agentId") if isinstance(agent, dict) else None
             # Prefer a terminal running an agent: binding to a plain shell by
             # default would make the first send address a shell prompt.
             if runtime in ("codex", "claude", "kimi"):

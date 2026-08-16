@@ -169,17 +169,21 @@ class TokenSecrecyTests(unittest.TestCase):
 
 
 class ProbeTests(unittest.TestCase):
-    def responder(self, *, nested_runtime: bool = True) -> Any:
+    def responder(self, *, real_agent_id: bool = True) -> Any:
         def respond(method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
             if path.endswith("workspace.list"):
                 return result([{"id": "ws-1", "name": "mahobrain"}])
-            if path.endswith("terminal.listSessions"):
-                session: dict[str, Any] = {"terminalId": "term-1", "state": "idle"}
-                if nested_runtime:
-                    session["agent"] = {"runtime": "codex"}
-                else:
-                    session["runtime"] = "codex"
-                return result({"sessions": [session]})
+            if path.endswith("terminal.list"):
+                return result(
+                    {"sessions": [{"terminalId": "term-1", "workspaceId": "ws-1"}]}
+                )
+            if path.endswith("terminalAgents.listByWorkspace"):
+                binding: dict[str, Any] = {"terminalId": "term-1"}
+                # `agentId` is the host's word. The alternative here is the name
+                # this code guessed twice, kept so the shape is pinned rather than
+                # tolerated: accepting both would hide the next rename.
+                binding["agentId" if real_agent_id else "runtime"] = "codex"
+                return result([binding])
             raise AssertionError(f"unexpected procedure: {path}")
 
         return respond
@@ -193,13 +197,13 @@ class ProbeTests(unittest.TestCase):
             source=Path("/tmp/manifest.json"),
         )
 
-    def test_the_runtime_is_read_from_the_nested_agent_object(self) -> None:
-        """Regression: the first version read a flat `session["runtime"]`.
+    def test_the_runtime_is_read_from_the_hosts_agent_id(self) -> None:
+        """Third name tried for one value, and the first one that was read.
 
-        That key does not exist. Against a live host running 22 agent terminals it
-        reported "no terminal is running codex, claude or kimi" — a guessed field
-        name producing a confident false negative. `SupersetBackend.list_panes`
-        already knew the shape.
+        It was `session["runtime"]`, then `agent["runtime"]`; both were reasoned
+        about rather than looked up, and each reported "no terminal is running
+        codex, claude or kimi" against a host running plenty. The host calls it
+        `agentId`, on `terminalAgents.listByWorkspace`.
         """
         with FakeTrpcServer(self.responder()) as server:
             binding = probe_binding(self.record_for(f"{server.endpoint}"))
@@ -207,10 +211,10 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(binding.runtime, "codex")
         self.assertEqual(binding.workspace_name, "mahobrain")
 
-    def test_a_flat_runtime_key_is_not_accepted(self) -> None:
+    def test_a_runtime_key_is_not_accepted_in_place_of_agent_id(self) -> None:
         # Pins the shape rather than tolerating both: accepting a key the host
         # never sends would hide the next rename instead of failing on it.
-        with FakeTrpcServer(self.responder(nested_runtime=False)) as server:
+        with FakeTrpcServer(self.responder(real_agent_id=False)) as server:
             with self.assertRaises(ProvisionError) as caught:
                 probe_binding(self.record_for(f"{server.endpoint}"))
         self.assertIn("no terminal is running", str(caught.exception))
