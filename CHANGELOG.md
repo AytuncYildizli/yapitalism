@@ -6,6 +6,51 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-08-16
+
+Driving 0.2.4 through its own MCP surface — the sequence a voice client actually
+causes — found two more, both invisible to the direct test because that test had
+called `capabilities()` first and cached the answer. Order-dependent behaviour
+hides in exactly that gap.
+
+### Fixed
+
+- **The first send of a process wrote through the guarded path before knowing the
+  host was unguarded.** "Try the guarded send and learn from the answer" was safe
+  only against a host that 404s the route. The shipped Superset *has* a
+  `terminal.send`, requires `terminalId`, `workspaceId` and `text`, and Zod strips
+  the guard fields it does not know — so the guarded attempt **succeeded and
+  wrote**, and only then did parsing fail for want of a `phase` the response never
+  had. A delivered message came back as a bare error, indistinguishable from
+  nothing having happened. The host is now asked what `terminal.send` requires
+  before the first write, at the cost of one round trip per process.
+- **Every proven send on a shipped host was refused.** `prove_acceptance` appends
+  the canary instruction, which adds a newline, and the fallback writes through
+  raw `writeInput` where a newline *is* a submit — so multi-line text was refused
+  outright. The host's own `terminal.send` frames it as a bracketed paste, and the
+  write now goes through it where it routes. The guards stay on this side; it
+  enforces none of them.
+
+  Two different questions about one procedure, and conflating them is what
+  produced `host/host/host` on every install: does it **route** (use it for the
+  write) versus what does it **require** (does it guard).
+- Submission is still verified rather than trusted, and `writeInput` still always
+  presses Enter. Reading the prompt first on that path found it "already empty"
+  and skipped the Enter, leaving text written and never sent — caught by the
+  existing stock-host test within minutes of being written.
+
+### Verified
+
+The full MCP surface, against the running Superset, on an agent terminal in a
+workspace the manifest does not bind:
+
+```
+panes_list  -> ok true, 33 superset panes (24 with agents), 2 tmux
+pane_send   -> GREEN, "codex aldı.", 3.9s
+```
+
+316 tests, up from 311.
+
 ## [0.2.4] - 2026-08-16
 
 **The Superset backend had been written against a build that does not exist.** Five

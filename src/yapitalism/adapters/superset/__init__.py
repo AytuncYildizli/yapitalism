@@ -720,9 +720,23 @@ class SupersetAdapter:
                 "unknown",
                 dry_run=True,
             )
-        # Known-unguarded hosts skip straight to the fallback. Unknown ones try the
-        # guarded send first and learn from the answer, so a guarded host pays no
-        # probe round trip at all - the detection is a byproduct of real work.
+        # Ask BEFORE writing. "Try the guarded send and learn from the answer" was
+        # safe only against the host this code imagined, where an unguarded build
+        # would 404 the route and nothing would land. The shipped Superset has a
+        # `terminal.send`; it requires terminalId, workspaceId and text, and Zod
+        # strips the guard fields it does not know. So the guarded attempt SUCCEEDS
+        # and writes, and only then does parsing fail for want of a `phase` the
+        # response never had - a delivered message reported as a bare error, which
+        # is the failure this project exists to prevent.
+        #
+        # Found by driving the published build through its own MCP surface: the
+        # direct test had called capabilities() first, which set the flag, so the
+        # fallback was taken and the defect was invisible.
+        #
+        # Costs one round trip on the first send of a process. A guarded host pays
+        # it once; the alternative is writing blind.
+        if self._host_guards is None:
+            self.host_enforces_send_guards()
         if self._host_guards is False:
             return self._dispatch_client_guarded(
                 text, expected_revision=expected_revision, token=token
@@ -840,11 +854,18 @@ class SupersetAdapter:
         Nothing is withheld for lacking the fork: the send happens, the canary
         is still checked, and the receipt says which guards were client-side.
         """
-        if "\n" in text or "\r" in text:
-            # The host's `send` takes text and decides when to submit. writeInput
-            # is raw bytes, so an embedded newline IS a submit: multi-line text
-            # would be delivered as several separate instructions, the first
-            # arriving alone. Refusing is the only honest option here.
+        # `terminal.send` exists on the shipped build and frames multi-line text as
+        # a bracketed paste, which is exactly what raw `writeInput` cannot do — an
+        # embedded newline IS a submit there, so a multi-line message would arrive
+        # as several separate instructions with the first one alone.
+        #
+        # Two different questions about the same procedure, and conflating them is
+        # what produced host/host/host on every install: does it ROUTE (use it for
+        # the write) versus what does it REQUIRE (does it guard). It routes here
+        # and guards nothing, so the write goes through it and the guards stay on
+        # this side.
+        host_send = self._transport.procedure_exists("terminal.send")
+        if not host_send and ("\n" in text or "\r" in text):
             raise ValueError(
                 "text must be a single line on a host without terminal.send; "
                 "an embedded newline would submit early and split the message"
@@ -928,9 +949,31 @@ class SupersetAdapter:
         # is known to have completed, so the refusal can say which case it is.
         self._landed_tokens.add(token)
         self._ambiguous_tokens.add(token)
-        self._transport.mutation("terminal.writeInput", {**base, "data": text})
+        if host_send:
+            self._transport.mutation(
+                "terminal.send", {**base, "text": text, "submit": True}
+            )
+        else:
+            self._transport.mutation("terminal.writeInput", {**base, "data": text})
         self._ambiguous_tokens.discard(token)
-        after, submitted = self._submit_and_verify(base, runtime)
+        # Only `terminal.send` submits by itself, so only it earns a look before an
+        # Enter. `writeInput` delivers bytes and nothing else — reading the prompt
+        # first there found it "already empty" and skipped the Enter entirely,
+        # leaving the text written and never sent. The existing stock-host test
+        # caught that within minutes of it being written.
+        #
+        # And the look is still a look, not trust: `submit: true` is the host
+        # saying what it meant to do, which is the same class of claim as
+        # `writeInput` reporting success for delivering bytes — measured wrong once
+        # already, leaving text staged while the receipt said sent.
+        if host_send:
+            time.sleep(self._REDRAW_SECONDS)
+            after = self.snapshot(max_lines=_MAX_LINES)
+            submitted = detect_prompt_state(after.text, runtime) == EMPTY
+            if not submitted:
+                after, submitted = self._submit_and_verify(base, runtime)
+        else:
+            after, submitted = self._submit_and_verify(base, runtime)
         return DispatchResult(
             client_token=token,
             terminal_id=self.config.terminal_id,

@@ -140,6 +140,21 @@ def guarded_send_probe() -> dict[str, object]:
     }
 
 
+def guarded_adapter(config: SupersetConfig) -> SupersetAdapter:
+    """An adapter told up front that its host is guarded.
+
+    The tests below exercise the guarded dispatch itself, not how a host is
+    recognised — that is `test_real_superset_shapes`. Stating it here keeps their
+    fixtures answering the one procedure they are about, instead of every one of
+    them having to also model the capability probe that now runs before the first
+    write. The probe exists because trying the guarded send to find out USED to
+    write on a host that does not guard.
+    """
+    adapter = SupersetAdapter(config)
+    adapter._host_guards = True
+    return adapter
+
+
 def send_result(
     *,
     terminal_id: str = "terminal-1",
@@ -245,7 +260,7 @@ class SupersetAdapterTests(unittest.TestCase):
             return snapshot_result(text="private terminal text")
 
         with FakeTrpcServer(responder) as server:
-            snapshot = SupersetAdapter(self.config(server.endpoint)).snapshot(max_lines=50)
+            snapshot = guarded_adapter(self.config(server.endpoint)).snapshot(max_lines=50)
         self.assertEqual(snapshot.revision, 7)
         evidence = snapshot.to_evidence("cmd-1")
         self.assertIs(evidence.leg, Leg.CAPTURE)
@@ -264,7 +279,7 @@ class SupersetAdapterTests(unittest.TestCase):
     def test_wrong_snapshot_target_is_rejected(self) -> None:
         with FakeTrpcServer(lambda *_: snapshot_result(terminal_id="terminal-2")) as server:
             with self.assertRaisesRegex(TrpcError, "target mismatch"):
-                SupersetAdapter(self.config(server.endpoint)).snapshot()
+                guarded_adapter(self.config(server.endpoint)).snapshot()
 
     def test_send_is_dry_run_then_exact_confirmed_post(self) -> None:
         def responder(method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -273,7 +288,7 @@ class SupersetAdapterTests(unittest.TestCase):
             return send_result()
 
         with FakeTrpcServer(responder) as server:
-            adapter = SupersetAdapter(self.config(server.endpoint))
+            adapter = guarded_adapter(self.config(server.endpoint))
             dry_run = adapter.dispatch("do work", expected_revision=9, client_token="cmd-1")
             self.assertTrue(dry_run.dry_run)
             self.assertEqual(server.requests, [])
@@ -297,7 +312,7 @@ class SupersetAdapterTests(unittest.TestCase):
 
     def test_ambiguous_post_transport_failure_is_not_retried(self) -> None:
         with FakeTrpcServer(lambda *_: {"__close__": True}) as server:
-            adapter = SupersetAdapter(self.config(server.endpoint))
+            adapter = guarded_adapter(self.config(server.endpoint))
             with self.assertRaises(TrpcError):
                 adapter.dispatch("work", expected_revision=9, client_token="stable", confirm=True)
         self.assertEqual(len(server.requests), 1)
@@ -305,7 +320,7 @@ class SupersetAdapterTests(unittest.TestCase):
 
     def test_confirmed_dispatch_requires_explicit_stable_token(self) -> None:
         with FakeTrpcServer(lambda *_: send_result()) as server:
-            adapter = SupersetAdapter(self.config(server.endpoint))
+            adapter = guarded_adapter(self.config(server.endpoint))
             with self.assertRaisesRegex(ValueError, "explicit stable client_token"):
                 adapter.dispatch("work", expected_revision=9, confirm=True)
         self.assertEqual(server.requests, [])
@@ -325,7 +340,7 @@ class SupersetAdapterTests(unittest.TestCase):
             )
 
         with FakeTrpcServer(responder) as server:
-            adapter = SupersetAdapter(self.config(server.endpoint))
+            adapter = guarded_adapter(self.config(server.endpoint))
             first = adapter.dispatch("work", expected_revision=9, client_token="stable", confirm=True)
             replay = adapter.dispatch("work", expected_revision=9, client_token="stable", confirm=True)
         self.assertTrue(first.dispatched)
@@ -351,7 +366,7 @@ class SupersetAdapterTests(unittest.TestCase):
             ]
         )
         with FakeTrpcServer(lambda *_: next(responses)) as server:
-            adapter = SupersetAdapter(self.config(server.endpoint))
+            adapter = guarded_adapter(self.config(server.endpoint))
             duplicate = adapter.dispatch("one", expected_revision=9, client_token="a", confirm=True)
             stale = adapter.dispatch("two", expected_revision=9, client_token="b", confirm=True)
         self.assertFalse(duplicate.dispatched)
@@ -360,7 +375,7 @@ class SupersetAdapterTests(unittest.TestCase):
 
     def test_token_reuse_with_mutated_text_or_revision_fails_locally(self) -> None:
         with FakeTrpcServer(lambda *_: send_result()) as server:
-            adapter = SupersetAdapter(self.config(server.endpoint))
+            adapter = guarded_adapter(self.config(server.endpoint))
             adapter.dispatch("one", expected_revision=9, client_token="stable")
             with self.assertRaises(ValueError):
                 adapter.dispatch("two", expected_revision=9, client_token="stable", confirm=True)
@@ -373,7 +388,7 @@ class SupersetAdapterTests(unittest.TestCase):
             [send_result(terminal_id="terminal-2"), send_result(runtime="bogus")]
         )
         with FakeTrpcServer(lambda *_: next(responses)) as server:
-            adapter = SupersetAdapter(self.config(server.endpoint))
+            adapter = guarded_adapter(self.config(server.endpoint))
             for token in ("a", "b"):
                 with self.assertRaises(TrpcError):
                     adapter.dispatch("work", expected_revision=9, client_token=token, confirm=True)
@@ -382,7 +397,7 @@ class SupersetAdapterTests(unittest.TestCase):
         with FakeTrpcServer(
             lambda *_: send_result(prompt_status="unknown", runtime="shell")
         ) as server:
-            sent = SupersetAdapter(self.config(server.endpoint)).dispatch(
+            sent = guarded_adapter(self.config(server.endpoint)).dispatch(
                 "work", expected_revision=9, client_token="a", confirm=True
             )
         self.assertTrue(sent.dispatched)
@@ -405,7 +420,7 @@ class SupersetAdapterTests(unittest.TestCase):
             ]
         )
         with FakeTrpcServer(lambda *_: next(responses)) as server:
-            adapter = SupersetAdapter(self.config(server.endpoint))
+            adapter = guarded_adapter(self.config(server.endpoint))
             for index in range(6):
                 with self.subTest(index=index), self.assertRaisesRegex(TrpcError, "contradictory"):
                     adapter.dispatch(
@@ -435,7 +450,7 @@ class SupersetAdapterTests(unittest.TestCase):
             ]
         )
         with FakeTrpcServer(lambda *_: next(responses)) as server:
-            adapter = SupersetAdapter(self.config(server.endpoint))
+            adapter = guarded_adapter(self.config(server.endpoint))
             for index in range(2):
                 with self.subTest(index=index), self.assertRaisesRegex(TrpcError, "deliveryId"):
                     adapter.dispatch(
@@ -444,7 +459,7 @@ class SupersetAdapterTests(unittest.TestCase):
 
     def test_dispatch_text_has_utf8_byte_bound_before_network(self) -> None:
         with FakeTrpcServer(lambda *_: send_result()) as server:
-            adapter = SupersetAdapter(self.config(server.endpoint))
+            adapter = guarded_adapter(self.config(server.endpoint))
             bounded = adapter.dispatch("x" * (64 * 1024), expected_revision=9)
             self.assertTrue(bounded.dry_run)
             with self.assertRaisesRegex(ValueError, "64 KiB"):
@@ -480,13 +495,13 @@ class SupersetAdapterTests(unittest.TestCase):
             clear=False,
         ):
             with FakeTrpcServer(lambda *_: snapshot_result()) as server:
-                snapshot = SupersetAdapter(self.config(server.endpoint)).snapshot()
+                snapshot = guarded_adapter(self.config(server.endpoint)).snapshot()
         self.assertEqual(snapshot.revision, 7)
 
     def test_oversized_response_is_rejected_before_json_parse(self) -> None:
         with FakeTrpcServer(lambda *_: {"__raw__": b"x" * (1024 * 1024 + 1)}) as server:
             with self.assertRaisesRegex(TrpcError, "size limit"):
-                SupersetAdapter(self.config(server.endpoint)).snapshot()
+                guarded_adapter(self.config(server.endpoint)).snapshot()
 
     def test_timeout_and_error_never_include_secret_or_terminal_content(self) -> None:
         responses = iter(
@@ -506,7 +521,7 @@ class SupersetAdapterTests(unittest.TestCase):
 
     def test_canary_rejects_literal_prompt_and_baseline_before_polling(self) -> None:
         with FakeTrpcServer(lambda *_: snapshot_result()) as server:
-            adapter = SupersetAdapter(self.config(server.endpoint))
+            adapter = guarded_adapter(self.config(server.endpoint))
             with self.assertRaisesRegex(ValueError, "submitted text"):
                 adapter.await_canary(
                     CANARY,
@@ -542,7 +557,7 @@ class SupersetAdapterTests(unittest.TestCase):
             ]
         )
         with FakeTrpcServer(lambda *_: next(snapshots)) as server:
-            observed = SupersetAdapter(self.config(server.endpoint)).await_canary(
+            observed = guarded_adapter(self.config(server.endpoint)).await_canary(
                 CANARY,
                 command_id="cmd",
                 baseline_revision=10,
@@ -570,7 +585,7 @@ class SupersetAdapterTests(unittest.TestCase):
             return snapshot_result(text="spinner", revision=revision)
 
         with FakeTrpcServer(responder) as server:
-            missed = SupersetAdapter(self.config(server.endpoint)).await_canary(
+            missed = guarded_adapter(self.config(server.endpoint)).await_canary(
                 CANARY,
                 command_id="cmd",
                 baseline_revision=10,
@@ -601,7 +616,7 @@ class SupersetAdapterTests(unittest.TestCase):
     def test_revision_reset_during_polling_fails_closed(self) -> None:
         with FakeTrpcServer(lambda *_: snapshot_result(revision=4)) as server:
             with self.assertRaisesRegex(TrpcError, "revision reset"):
-                SupersetAdapter(self.config(server.endpoint)).await_canary(
+                guarded_adapter(self.config(server.endpoint)).await_canary(
                     CANARY,
                     command_id="cmd",
                     baseline_revision=5,
