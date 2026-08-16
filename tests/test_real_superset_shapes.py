@@ -318,6 +318,112 @@ class AgentBindingTests(unittest.TestCase):
         self.assertEqual([p.runtime for p in panes], ["codex"])
 
 
+class WriteThroughTheHostsOwnSendTests(unittest.TestCase):
+    """Found by driving the published build through its own MCP surface.
+
+    The direct test had called `capabilities()` first, which cached the answer, so
+    the fallback was taken and none of this was visible. Order-dependent behaviour
+    hides in exactly that gap.
+    """
+
+    def send(self, text: str, *, host_send: bool = True) -> tuple[Any, list[dict[str, Any]]]:
+        seen: list[dict[str, Any]] = []
+        empty = REAL_SNAPSHOT["text"]
+
+        def responder(method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+            if path.endswith("terminal.send"):
+                if not payload.get("terminalId"):
+                    return zod_400(UNGUARDED_SEND_ISSUES) if host_send else {"__status__": 404}
+                if not host_send:
+                    return {"__status__": 404}
+                seen.append(dict(payload, __procedure__="terminal.send"))
+                return result({"terminalId": TERMINAL})
+            if path.endswith("terminal.writeInput"):
+                seen.append(dict(payload, __procedure__="terminal.writeInput"))
+                return result({"success": True})
+            if path.endswith("terminal.snapshot"):
+                return result(dict(REAL_SNAPSHOT, text=empty))
+            return real_host()(method, path, payload)
+
+        with FakeTrpcServer(responder) as server, tempfile.TemporaryDirectory() as tmp:
+            backend = SupersetBackend(manifest_path=write_manifest(tmp, server.endpoint))
+            outcome = backend.send(
+                f"superset:{TERMINAL}", text, canary=None, client_token="w1"
+            )
+        return outcome, seen
+
+    def test_an_unguarded_host_is_never_sent_a_guarded_payload(self) -> None:
+        """The guarded attempt used to LAND before we noticed it was unguarded.
+
+        Zod strips fields it does not know, so `{terminalId, workspaceId, text}`
+        validated, the message was written, and only then did parsing fail for want
+        of a `phase` the response never had — a delivered message returned as a bare
+        error, indistinguishable from nothing having happened.
+        """
+        _, seen = self.send("one line")
+        writes = [call for call in seen if call["__procedure__"] == "terminal.send"]
+        self.assertEqual(len(writes), 1)
+        self.assertNotIn("expectRevision", writes[0])
+        self.assertNotIn("clientToken", writes[0])
+
+    def test_the_write_goes_through_the_hosts_send_when_it_routes(self) -> None:
+        outcome, seen = self.send("one line")
+        self.assertTrue(outcome.dispatched)
+        self.assertEqual(outcome.phase, "injected")
+        self.assertEqual([c["__procedure__"] for c in seen], ["terminal.send"])
+
+    def test_multi_line_text_is_accepted_when_the_host_can_frame_it(self) -> None:
+        """`prove_acceptance` appends the canary instruction, which adds a newline.
+
+        Through raw `writeInput` a newline IS a submit, so the fallback refuses
+        multi-line — which meant every proven send on the shipped host was refused.
+        The host's own `send` frames it as a bracketed paste.
+        """
+        outcome, seen = self.send("first line\nsecond line")
+        self.assertTrue(outcome.dispatched)
+        self.assertIn("\n", seen[0]["text"])
+
+    def test_multi_line_is_still_refused_where_only_writeInput_exists(self) -> None:
+        from yapitalism.mcp.backends.base import BackendError
+
+        with self.assertRaises(BackendError) as caught:
+            self.send("first\nsecond", host_send=False)
+        self.assertIn("single line", str(caught.exception))
+
+    def test_submission_is_verified_rather_than_taken_on_trust(self) -> None:
+        """`submit: true` is the host saying what it meant to do.
+
+        `writeInput` reporting success for delivering bytes was measured to be
+        exactly that kind of claim, and it left text staged while the receipt said
+        sent. So the prompt is read afterwards either way.
+        """
+        staged = "› first line\nsecond line"
+
+        def responder(method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+            if path.endswith("terminal.send"):
+                if not payload.get("terminalId"):
+                    return zod_400(UNGUARDED_SEND_ISSUES)
+                writes.append(payload)
+                return result({"terminalId": TERMINAL})
+            if path.endswith("terminal.snapshot"):
+                # Empty before the write, and the composer keeps the text after it.
+                return result(
+                    dict(REAL_SNAPSHOT, text=staged if writes else REAL_SNAPSHOT["text"])
+                )
+            if path.endswith("terminal.writeInput"):
+                return result({"success": True})
+            return real_host()(method, path, payload)
+
+        writes: list[dict[str, Any]] = []
+        with FakeTrpcServer(responder) as server, tempfile.TemporaryDirectory() as tmp:
+            backend = SupersetBackend(manifest_path=write_manifest(tmp, server.endpoint))
+            outcome = backend.send(
+                f"superset:{TERMINAL}", "one line", canary=None, client_token="w2"
+            )
+        self.assertEqual(outcome.phase, "staged_not_submitted")
+        self.assertFalse(outcome.dispatched)
+
+
 class SendContractTests(unittest.TestCase):
     """A routed name is not an enforced guarantee."""
 
