@@ -3,7 +3,7 @@
   "name": "io.github.AytuncYildizli/yapitalism",
   "title": "Yapitalism",
   "description": "Drive terminal coding agents by voice, with receipts that never claim more than they proved.",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "websiteUrl": "https://yapitalism.com",
   "repository": {
     "url": "https://github.com/AytuncYildizli/yapitalism",
@@ -13,7 +13,7 @@
     {
       "registryType": "pypi",
       "identifier": "yapitalism",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "transport": {
         "type": "stdio"
       },

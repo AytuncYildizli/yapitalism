@@ -34,7 +34,12 @@ from yapitalism.mcp.backends.base import (
 from yapitalism.mcp.backends.superset_backend import SupersetBackend
 from yapitalism.mcp.receipt import build_receipt
 
-from test_superset_adapter import FakeTrpcServer, result, snapshot_result
+from test_superset_adapter import (
+    FakeTrpcServer,
+    guarded_send_probe,
+    result,
+    snapshot_result,
+)
 
 TERMINAL = "terminal-1"
 WORKSPACE = "workspace-1"
@@ -94,12 +99,13 @@ def stock_responder(
             # that routes — a stale manifest used to report full guarantees while
             # every send returned 401.
             return result([{"id": WORKSPACE, "name": "ws"}])
-        if path.endswith("terminal.listSessions"):
-            # `agent.runtime`, the shape the host really sends — a flat "runtime"
-            # key here would let a guessed field name pass its own test.
-            return result(
-                {"sessions": [{"terminalId": TERMINAL, "agent": {"runtime": "codex"}}]}
-            )
+        if path.endswith("terminal.list"):
+            return result({"sessions": [{"terminalId": TERMINAL, "workspaceId": WORKSPACE}]})
+        if path.endswith("terminalAgents.listByWorkspace"):
+            # `agentId`, which is what the host really sends. This served
+            # `agent.runtime` on `terminal.listSessions` — a procedure the host
+            # 404s and a field no build has — so the guess passed its own test.
+            return result([{"terminalId": TERMINAL, "agentId": "codex"}])
         raise AssertionError(f"unexpected procedure: {path}")
 
     return responder
@@ -126,8 +132,10 @@ class StockHostCapabilityTests(unittest.TestCase):
     def test_a_guarded_host_reports_host_enforcement(self) -> None:
         def responder(method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
             if path.endswith("terminal.send"):
-                # Present, and rejecting the empty probe payload — 400, not 404.
-                return {"__status__": 400}
+                # A 400 alone proved only that a procedure by this name exists.
+                # What makes a host guarded is which fields it REQUIRES, so the
+                # probe answer has to name them.
+                return guarded_send_probe()
             if path.endswith("workspace.list"):
                 # Capabilities are gated on a call that AUTHENTICATES, not just one
                 # that routes: `procedure_exists` treats 401 as "present", so a stale

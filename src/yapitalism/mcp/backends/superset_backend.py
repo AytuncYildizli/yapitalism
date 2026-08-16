@@ -20,7 +20,12 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ...adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
+from ...adapters.superset import (
+    SupersetAdapter,
+    SupersetConfig,
+    TrpcError,
+    TrpcProcedureMissing,
+)
 from ...prompt_state import EMPTY, detect_prompt_state
 from .base import (
     AGENT_RUNTIMES,
@@ -239,6 +244,18 @@ class SupersetBackend:
                 continue
             try:
                 sessions = adapter.list_terminals(workspace_id)
+            except TrpcProcedureMissing as missing:
+                # A missing procedure is a fact about the HOST, not about this
+                # workspace, so it fails the call instead of being skipped. Skipping
+                # it meant a host we could not enumerate at all reported zero
+                # terminals — the "empty list from a broken backend reads as no
+                # terminals there" the registry forbids one layer up, produced two
+                # layers down by a loop that was right about the case it was
+                # written for and silent about this one.
+                raise BackendError(
+                    f"this Superset host does not route the terminal listing this "
+                    f"tool uses ({missing})"
+                ) from None
             except (TrpcError, ValueError):
                 # One unreadable workspace must not hide the rest of the host.
                 continue
@@ -259,7 +276,10 @@ class SupersetBackend:
                         target_id=f"superset:{terminal_id}",
                         # Project first: it is the anchor a person names.
                         label=f"{project}/{name}" if project else name,
-                        runtime=str(agent.get("runtime") or "unknown"),
+                        # `agentId`, the host's own word for it. This read
+                        # `agent["runtime"]`, a field no shipped build has, so
+                        # every Superset terminal listed as "unknown".
+                        runtime=str(agent.get("agentId") or "unknown"),
                         width=0,
                         height=0,
                         dead=state == "exited",

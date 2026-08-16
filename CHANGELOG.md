@@ -6,6 +6,60 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-08-16
+
+**The Superset backend had been written against a build that does not exist.** Five
+defects, found by pointing it at the running Superset and reading what came back
+instead of what the code expected. The first send it has ever completed end to end,
+proven by a canary, happened while fixing them.
+
+Every test had passed throughout, because the tests invented the same shapes the
+code did.
+
+### Fixed
+
+- **Every Superset send was refused.** A runtime gate added in 0.2.0 asks the host
+  which agent owns a terminal, via `terminal.listSessions` — a procedure the host
+  answers 404 for. That name exists on the *daemon* router and lists something
+  else. The runtime came back `unknown` for every terminal, so the gate rejected
+  every send as `rejected_not_an_agent`. Terminals are `terminal.list`; the agent
+  is `terminalAgents.listByWorkspace`, and it is called `agentId`, not
+  `agent.runtime`.
+- **A host that could not be enumerated reported zero terminals.** `list_panes`
+  skips a workspace it cannot read so one bad workspace cannot hide the rest — but
+  a missing procedure fails *every* workspace, and the result read as "this host
+  has no terminals". A missing procedure is now a fact about the host and fails the
+  call. One genuinely bad workspace is still skipped.
+- **`terminal.snapshot` was required to carry a `revision` it does not have.** The
+  shipped snapshot is `{terminalId, cols, rows, text}`; the string `revision` does
+  not occur anywhere in the host's bundle. Every snapshot raised, which is the other
+  reason no send could complete. The revision is now derived from the screen when
+  the host sends none — and carries `revision_is_derived`, because a hash answers
+  "did this change" and cannot order two changes.
+- **Two places read a derived revision as if it were a counter.** The acceptance
+  poller aborted when it decreased, and accepted the canary only when it increased —
+  so a marker that was on screen could be discarded because a number went the wrong
+  way. The first live GREEN on this path passed by luck of the hash ordering; the
+  test written afterwards caught it.
+- **`host` was reported because a name was routed.** Capability detection asked
+  `procedure_exists("terminal.send")`. Superset does ship a `terminal.send` — it
+  takes `{terminalId, workspaceId, text, submit}`, frames multi-line text as a
+  bracketed paste, and guards nothing. So every install has been told its host
+  enforced idempotent dispatch, optimistic revision and an empty-prompt check.
+  Detection now asks what the procedure *requires*, by sending an empty input and
+  reading which fields the host's own validator names. An unanswerable probe claims
+  nothing.
+
+### Changed
+
+- The README no longer leads with two kinds of GREEN. Where the checks happen is a
+  diagnostic, not the product's message: GREEN means the agent emitted the marker,
+  and that is the same claim on either backend.
+
+311 tests, up from 297. The new ones are built from responses recorded off the
+running host — its JSON, its Zod errors, and its own bundle — rather than from what
+this project believed it would say.
+
 ## [0.2.3] - 2026-08-15
 
 Everything here was found by running the tool on a machine that has nothing:

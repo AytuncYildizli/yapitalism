@@ -9,6 +9,7 @@ import socket
 import stat
 import time
 import uuid
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -255,6 +256,11 @@ class TerminalSnapshot:
     revision: int
     cols: int
     rows: int
+    #: Whether `revision` is the HOST's counter or one derived from the screen.
+    #: A derived value answers "did this change" and nothing else — it does not
+    #: increase, so anything that treats revisions as ordered has to check this
+    #: first. The shipped Superset sends no counter, so this is the normal case.
+    revision_is_derived: bool = False
 
     def __repr__(self) -> str:
         return (
@@ -387,6 +393,43 @@ class _TrpcTransport:
         headers["Content-Type"] = "application/json"
         return self._request(Request(url, data=body, headers=headers, method="POST"), None)
 
+    def required_input_fields(self, procedure: str) -> set[str]:
+        """Which top-level input fields this procedure REQUIRES, per its own validator.
+
+        Sends an empty input so the host's Zod schema reports every missing field
+        at once, then reads the `path` of each issue. An empty set means either the
+        procedure takes no required fields or the question could not be answered —
+        both of which must read as "no guarantees", so callers test for the
+        presence of what they need rather than the absence of what they do not.
+
+        This exists because `procedure_exists` was being used to conclude that a
+        host enforced three guarantees. It only ever proved a name was routed.
+        """
+        url = f"{self.config.endpoint}/{procedure}"
+        body = json.dumps({"json": {}}, separators=(",", ":")).encode("utf-8")
+        headers = self._headers()
+        headers["Content-Type"] = "application/json"
+        request = Request(url, data=body, headers=headers, method="POST")
+        try:
+            with self._opener.open(request, timeout=self.config.timeout_seconds):
+                return set()  # accepted an empty input: it requires nothing
+        except HTTPError as exc:
+            if exc.code != 400:
+                return set()
+            try:
+                payload = json.loads(exc.read(_RESPONSE_MAX_BYTES).decode("utf-8"))
+                issues = json.loads(payload["error"]["json"]["message"])
+            except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+                return set()
+            fields: set[str] = set()
+            for issue in issues if isinstance(issues, list) else []:
+                path = issue.get("path") if isinstance(issue, dict) else None
+                if isinstance(path, list) and path and isinstance(path[0], str):
+                    fields.add(path[0])
+            return fields
+        except (TimeoutError, socket.timeout, URLError, OSError, http.client.HTTPException):
+            return set()
+
     def procedure_exists(self, procedure: str) -> bool:
         """Whether the host routes this procedure at all.
 
@@ -492,12 +535,15 @@ class SupersetAdapter:
         terminal_id = _required_response_string(data, "terminalId")
         if terminal_id != self.config.terminal_id:
             raise TrpcError("Superset snapshot target mismatch")
+        text = _required_string_allow_empty(data, "text")
+        revision, derived = _revision_of(data, text)
         return TerminalSnapshot(
             terminal_id=terminal_id,
-            text=_required_string_allow_empty(data, "text"),
-            revision=_required_nonnegative_int(data, "revision"),
+            text=text,
+            revision=revision,
             cols=_required_positive_int(data, "cols"),
             rows=_required_positive_int(data, "rows"),
+            revision_is_derived=derived,
         )
 
     def list_workspaces(self) -> list[dict[str, Any]]:
@@ -513,22 +559,66 @@ class SupersetAdapter:
         return [row for row in cast(list[Any], data) if isinstance(row, dict)]
 
     def list_terminals(self, workspace_id: str) -> list[dict[str, Any]]:
-        """Terminal sessions in one workspace, with the host's own runtime.
+        """Terminal sessions in one workspace, each with its agent where there is one.
 
-        The runtime here comes from the host's agent registry rather than a
-        process scan, so unlike tmux it can be trusted before a write.
+        Two procedures, because the host keeps two things:
+
+          terminal.list                    -> the live PTYs
+          terminalAgents.listByWorkspace   -> which agent is bound to which PTY
+
+        This called `terminal.listSessions`, which the host answers 404 for. That
+        name does exist, on the **daemon** router, and it lists daemon sessions
+        rather than terminals. Nothing failed loudly: the 404 became a TrpcError,
+        `list_panes` swallowed it per workspace, and a host we could not enumerate
+        at all reported as a host with zero terminals — while `registry_runtime`
+        returned "unknown" for everything, so the agent gate refused every send.
+
+        Measured against the shipped host on 2026-08-16, both names read out of the
+        app's own bundle and its Zod errors rather than guessed.
         """
         if not workspace_id.strip():
             raise ValueError("workspace_id must not be empty")
-        data = self._transport.query("terminal.listSessions", {"workspaceId": workspace_id})
+        data = self._transport.query("terminal.list", {"workspaceId": workspace_id})
         if not isinstance(data, dict):
-            raise TrpcError("Superset terminal.listSessions did not return an object")
+            raise TrpcError("Superset terminal.list did not return an object")
         sessions = cast(dict[str, Any], data).get("sessions")
         if not isinstance(sessions, list):
             # The wrapper object is load-bearing: treating a missing `sessions`
             # as "no terminals" would report an empty workspace for a broken read.
-            raise TrpcError("Superset terminal.listSessions omitted sessions")
-        return [row for row in cast(list[Any], sessions) if isinstance(row, dict)]
+            raise TrpcError("Superset terminal.list omitted sessions")
+        rows = [row for row in cast(list[Any], sessions) if isinstance(row, dict)]
+
+        # A workspace with no agent bindings is normal, and a terminal with no
+        # binding is a plain shell — so a failure to read the bindings must NOT
+        # look like that. It propagates, and the caller decides.
+        bindings = self.list_agent_bindings(workspace_id)
+        by_terminal = {
+            binding.get("terminalId"): binding
+            for binding in bindings
+            if isinstance(binding.get("terminalId"), str)
+        }
+        for row in rows:
+            binding = by_terminal.get(row.get("terminalId"))
+            if binding is not None:
+                row["agent"] = binding
+        return rows
+
+    def list_agent_bindings(self, workspace_id: str) -> list[dict[str, Any]]:
+        """Which agent the host has bound to each terminal in one workspace.
+
+        `agentId` is the host's own answer, from `terminalAgentStore` — not a
+        process scan, so unlike tmux it can be trusted before a write.
+        """
+        if not workspace_id.strip():
+            raise ValueError("workspace_id must not be empty")
+        data = self._transport.query(
+            "terminalAgents.listByWorkspace", {"workspaceId": workspace_id}
+        )
+        if not isinstance(data, list):
+            raise TrpcError(
+                "Superset terminalAgents.listByWorkspace did not return a list"
+            )
+        return [row for row in cast(list[Any], data) if isinstance(row, dict)]
 
     def clear_prompt(self, action: str = "escape") -> ClearResult:
         """Write one fixed control sequence to unstick a blocked prompt.
@@ -705,19 +795,27 @@ class SupersetAdapter:
         )
 
     def host_enforces_send_guards(self) -> bool:
-        """Whether this host has the guarded `terminal.send`, asked once.
+        """Whether this host's `terminal.send` enforces the guards, asked once.
 
-        A stock Superset build routes `terminal.writeInput` but not
-        `terminal.send`; the guarded path with `expectRevision`, `clientToken`
-        and `requireEmptyPrompt` is not part of it. Assuming otherwise is what
-        made this adapter usable on exactly one machine, so the host is asked
-        instead of assumed.
+        This asked `procedure_exists("terminal.send")`, and a routing name is not
+        a guarantee. The shipped Superset build HAS a `terminal.send` — it takes
+        `{terminalId, workspaceId, text, submit}` and frames multi-line text as a
+        bracketed paste. Nothing about it is guarded, and the words
+        `expectRevision`, `clientToken` and `requireEmptyPrompt` do not occur
+        anywhere in its bundle. So every install reported host/host/host on the
+        strength of a same-named convenience procedure.
+
+        Now the host's own validator answers. An empty input makes Zod enumerate
+        the fields it requires; a guarded build demands the guards, and this one
+        names only `terminalId`, `workspaceId` and `text`. Asking what a procedure
+        REQUIRES is the difference between a name and a contract.
 
         Cached for the process: the answer is a property of the build, and
         re-probing per send would add a round trip to every dispatch.
         """
         if self._host_guards is None:
-            self._host_guards = self._transport.procedure_exists("terminal.send")
+            required = self._transport.required_input_fields("terminal.send")
+            self._host_guards = {"expectRevision", "clientToken"} <= required
         return self._host_guards
 
     def _dispatch_client_guarded(
@@ -903,25 +1001,26 @@ class SupersetAdapter:
         return self._runtime_from_registry()
 
     def _runtime_from_registry(self) -> str:
-        """The host's own runtime for this terminal, or "unknown".
+        """The host's own agent for this terminal, or "unknown".
 
-        `listSessions` exists on a stock build, so this stays registry-backed
-        rather than falling back to a process scan.
+        The binding carries `agentId`, which is the host's vocabulary — `codex`,
+        `claude`, `kimi`, and a dozen more this project has no launcher for. The
+        ones we recognise pass; the rest read as "unknown" and the caller refuses,
+        which over-refuses rather than writing into something unrecognised.
+
+        This asked for `agent.runtime`, a field that does not exist, on a procedure
+        that does not exist. It returned "unknown" for every terminal on every
+        host, so the gate above it refused every Superset send for two days.
         """
         try:
-            sessions = self.list_terminals(self.config.workspace_id)
+            bindings = self.list_agent_bindings(self.config.workspace_id)
         except (TrpcError, ValueError):
             return "unknown"
-        for row in sessions:
-            if row.get("terminalId") != self.config.terminal_id:
+        for binding in bindings:
+            if binding.get("terminalId") != self.config.terminal_id:
                 continue
-            # Nested under `agent`, not flat on the session. The first version read
-            # `row["runtime"]` — the third time today that a guessed field name got
-            # written instead of read — which would have returned "unknown" for
-            # every real session and made the prompt check below untestable.
-            agent = row.get("agent")
-            runtime = agent.get("runtime") if isinstance(agent, dict) else None
-            return runtime if runtime in _RUNTIMES else "unknown"
+            agent_id = binding.get("agentId")
+            return agent_id if agent_id in _RUNTIMES else "unknown"
         return "unknown"
 
     def validate_canary(
@@ -985,12 +1084,25 @@ class SupersetAdapter:
                 request_timeout=min(self.config.timeout_seconds, remaining + response_grace),
             )
             attempts += 1
-            if snapshot.revision < baseline_revision:
+            # Only a HOST counter can be read as ordered. A derived revision is a
+            # hash of the screen: it moves in both directions as output scrolls,
+            # and treating a smaller number as a reset aborted every poll on the
+            # shipped build — after the write had already landed.
+            if not snapshot.revision_is_derived and snapshot.revision < baseline_revision:
                 raise TrpcError("Superset terminal revision reset during canary polling")
             last_revision = snapshot.revision
-            if snapshot.revision > baseline_revision and _structured_canary_observed(
-                snapshot.text, canary
-            ):
+            # "The screen changed" is the actual requirement. `>` expresses that
+            # only for a host counter; for a derived hash it silently discards
+            # every change that happens to hash lower than the baseline — a real
+            # canary, on screen, thrown away because of a number's direction. The
+            # live run that first proved this path GREEN did so by luck of the
+            # ordering, and the test that caught it was written afterwards.
+            changed = (
+                snapshot.revision != baseline_revision
+                if snapshot.revision_is_derived
+                else snapshot.revision > baseline_revision
+            )
+            if changed and _structured_canary_observed(snapshot.text, canary):
                 evidence = EvidenceEvent(
                     event_id=str(uuid.uuid4()),
                     command_id=command_id,
@@ -1082,6 +1194,27 @@ def _required_nonnegative_int(payload: dict[str, Any], key: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise TrpcError(f"Superset response field {key} was not a non-negative integer")
     return value
+
+
+def _revision_of(payload: dict[str, Any], text: str) -> tuple[int, bool]:
+    """The host's revision if it sends one, otherwise one derived from the screen.
+
+    The shipped host does not send one: `terminal.snapshot` returns
+    `{terminalId, cols, rows, text}`, and the string "revision" does not occur
+    anywhere in its bundle. Requiring the field made every snapshot raise, which
+    is why no Superset send could complete.
+
+    A derived value is NOT the host's monotonic counter and must never be reported
+    as one — it cannot order two changes, and a screen that returns to an earlier
+    state repeats its number. It answers only "did this change under me", which is
+    the single question the optimistic check actually asks. Callers that want to
+    claim more have to check `optimistic_revision` on the capabilities, which says
+    `client` for exactly this reason.
+    """
+    value = payload.get("revision")
+    if not isinstance(value, bool) and isinstance(value, int) and value >= 0:
+        return value, False
+    return zlib.crc32(text.encode("utf-8", "replace")), True
 
 
 def _required_positive_int(payload: dict[str, Any], key: str) -> int:

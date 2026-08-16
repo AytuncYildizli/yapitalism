@@ -69,9 +69,11 @@ What remains irreducible: if an agent silently ignores the text and prints nothi
 here can distinguish that from an agent that never received it. Verification needs the agent to
 emit something.
 
-### Backends do not prove the same things
+### Where the checks happen
 
-A receipt carries **who enforced** each guarantee, which is finer than whether:
+Most of the time this does not change what you do, and it is not read out loud. It is in the
+payload and in `yapitalism setup`, for when something goes wrong and you want to know what was
+actually checked before the write.
 
 | | meaning |
 |---|---|
@@ -85,22 +87,19 @@ A receipt carries **who enforced** each guarantee, which is finer than whether:
   "missing_guarantees": ["optimistic_revision"] }
 ```
 
-`yapitalism setup` prints the table for your machine. On a Superset host carrying the guarded
-`terminal.send`, all three are `host`. On a stock Superset build — which routes `terminal.writeInput`
-and none of the guarded send — they move to `client`, and the send still happens. tmux enforces two
-of three itself and cannot do the third at all.
+`yapitalism setup` prints the table for your machine. Today both backends land in `client` for most
+of it: the checks happen here, a moment before the write, rather than inside the host atomically
+with it. tmux cannot do the revision check at all.
 
-These levels are asked of the host, not assumed. They were constants describing one machine's build
-until that was caught: every stock user would have received a GREEN asserting three guards their
-host had never heard of.
+**No shipped Superset enforces these itself, and this tool used to claim it did.** It concluded
+"guarded" from the fact that a procedure named `terminal.send` was routed. The `terminal.send`
+Superset actually ships takes `{terminalId, workspaceId, text, submit}` and guards nothing. The
+levels are now read from what the host's own validator *requires* — the difference between a name
+and a contract.
 
-**The guarded build is not something you can install.** The atomic `terminal.send` lives in a
-Superset fork that is not upstream, so today every other machine gets the `client` column — a real
-guarantee, checked a moment before the write instead of atomically with it. Saying which one you
-have is the point; pretending everyone has the first would be the same overclaim one level up.
-
-Both reach GREEN. They are not the same GREEN, and saying so is the difference between a receipt and
-a decoration.
+Both backends reach GREEN, and GREEN means the same thing either way: the agent emitted the
+one-time marker, so it received the text and processed it. The table is for diagnosing a machine,
+not something to reason about on every send.
 
 ## Install
 

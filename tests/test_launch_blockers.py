@@ -21,7 +21,12 @@ from yapitalism.mcp.backends.base import AcceptanceOutcome, BackendError, SendOu
 from yapitalism.mcp.backends.superset_backend import SupersetBackend
 
 from test_capability_honesty import TERMINAL, WORKSPACE, write_manifest
-from test_superset_adapter import FakeTrpcServer, result, snapshot_result
+from test_superset_adapter import (
+    FakeTrpcServer,
+    guarded_send_probe,
+    result,
+    snapshot_result,
+)
 
 #: Tests run from tests/ as well as from the repo root, so paths are anchored.
 REPO = pathlib.Path(__file__).resolve().parent.parent
@@ -43,17 +48,33 @@ def host(
             return snapshot_result(text=IDLE, revision=7)
         if path.endswith("workspace.list"):
             return result([{"id": WORKSPACE, "name": "ws"}])
-        if path.endswith("terminal.listSessions"):
+        if path.endswith("terminal.list"):
             # Two terminals so a cross-pane token check is reachable; with one, the
             # workspace-binding guard fires first and hides it.
             return result(
                 {
                     "sessions": [
-                        {"terminalId": TERMINAL, "agent": {"runtime": runtime}},
-                        {"terminalId": OTHER_TERMINAL, "agent": {"runtime": runtime}},
+                        {"terminalId": TERMINAL, "workspaceId": WORKSPACE},
+                        {"terminalId": OTHER_TERMINAL, "workspaceId": WORKSPACE},
                     ]
                 }
             )
+        if path.endswith("terminalAgents.listByWorkspace"):
+            # `agentId` is the host's word for it. This fixture used to serve
+            # `agent.runtime` on `terminal.listSessions`, neither of which any
+            # shipped build has.
+            return result(
+                [
+                    {"terminalId": TERMINAL, "agentId": runtime},
+                    {"terminalId": OTHER_TERMINAL, "agentId": runtime},
+                ]
+            )
+        if path.endswith("terminal.send") and not payload.get("terminalId"):
+            # The capability probe: an empty input, so the host's validator names
+            # what it requires. This fixture models a GUARDED build, so it names
+            # the guards — which is what makes it a guarded host now, rather than
+            # merely having a procedure by that name.
+            return guarded_send_probe()
         if path.endswith("terminal.send"):
             calls.append(payload)
             return result(

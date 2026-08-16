@@ -117,6 +117,29 @@ def snapshot_result(*, text: str = "safe", revision: int = 7, terminal_id: str =
     )
 
 
+def guarded_send_probe() -> dict[str, object]:
+    """What a GUARDED build's validator answers to an empty `terminal.send` input.
+
+    Capability detection asks what the procedure REQUIRES, not whether it routes,
+    because the shipped Superset has a `terminal.send` that guards nothing. A
+    fixture claiming to be a guarded host has to name the guards here or it is not
+    one — which is the whole distinction that was missing.
+    """
+    import json as _json
+
+    issues = [
+        {"expected": "string", "code": "invalid_type", "path": ["terminalId"]},
+        {"expected": "string", "code": "invalid_type", "path": ["workspaceId"]},
+        {"expected": "string", "code": "invalid_type", "path": ["text"]},
+        {"expected": "number", "code": "invalid_type", "path": ["expectRevision"]},
+        {"expected": "string", "code": "invalid_type", "path": ["clientToken"]},
+    ]
+    return {
+        "__status__": 400,
+        "error": {"json": {"message": _json.dumps(issues), "code": -32600}},
+    }
+
+
 def send_result(
     *,
     terminal_id: str = "terminal-1",
