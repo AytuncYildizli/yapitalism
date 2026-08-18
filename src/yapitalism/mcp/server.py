@@ -22,6 +22,7 @@ import argparse
 import os
 import time
 
+import threading
 from uuid import uuid4
 
 from fastmcp import FastMCP
@@ -30,6 +31,7 @@ from .. import __version__
 from .backends.base import AGENT_RUNTIMES, AcceptanceOutcome, BackendError
 from .backends.superset_backend import SupersetBackend
 from .backends.tmux_backend import TmuxBackend
+from ..tokens import BoundedTokens
 from .receipt import build_receipt, canary_instruction, new_canary
 from .registry import BackendRegistry
 from .resume import speak_fidelity
@@ -391,7 +393,18 @@ def pane_send(
                 False, 0, f"acceptance_observation_failed: {type(error).__name__}: {error}"
             )
 
-    receipt = build_receipt(outcome, acceptance, backend.capabilities())
+    # THIS write's guarantees, not the backend's standing ones. `SendOutcome`
+    # carries an override for exactly the case where they differ — a send that
+    # overruled the host's prompt check enforces one guarantee fewer — and the
+    # field was being set and never read, so the receipt reported the standing
+    # answer anyway. Its own docstring calls that "a lie shaped exactly like the
+    # one the enforcement levels exist to prevent".
+    receipt = build_receipt(
+        outcome,
+        acceptance,
+        outcome.capabilities_override or backend.capabilities(),
+        clearing_known_useless=_clearing_is_known_useless(target_id),
+    )
     return {"ok": True, "target_id": target_id, "runtime": outcome.runtime, **receipt.as_dict()}
 
 def _spoken_pane_name(cwd: str, runtime: str) -> str:
@@ -406,6 +419,34 @@ def _spoken_pane_name(cwd: str, runtime: str) -> str:
     """
     folder = cwd.rstrip("/").rsplit("/", 1)[-1] if cwd else ""
     return f"{folder} klasöründeki {runtime}" if folder else runtime
+
+
+#: Panes where a clear was attempted and the screen did not move. Bounded and
+#: guarded, because FastMCP runs sync tools on a threadpool.
+#:
+#: This exists because the tool was offering a remedy that does not work, and then
+#: offering it again. A wedged agent ignores Escape and C-u; `pane_clear` says so
+#: honestly, and the NEXT refusal repeated "I can clear it and retry" as if nothing
+#: had been learned. Honest sentences in sequence can still add up to a loop the
+#: operator cannot leave — and a voice operator has no other way out.
+_clears_that_changed_nothing = BoundedTokens(capacity=256)
+_clear_memory_guard = threading.Lock()
+
+
+def _remember_clear_outcome(target_id: str, changed: bool) -> None:
+    with _clear_memory_guard:
+        if changed:
+            # It responded to keys this time, so the next refusal may offer the
+            # clear again. Forgetting on success matters as much as remembering on
+            # failure: a pane that recovers must not be described as stuck forever.
+            _clears_that_changed_nothing.discard(target_id)
+        else:
+            _clears_that_changed_nothing.add(target_id)
+
+
+def _clearing_is_known_useless(target_id: str) -> bool:
+    with _clear_memory_guard:
+        return target_id in _clears_that_changed_nothing
 
 
 @mcp.tool
@@ -612,6 +653,9 @@ def pane_clear(target_id: str, action: str = "escape") -> dict[str, object]:
     except BackendError as error:
         return {"ok": False, "error": str(error), "target_id": target_id}
 
+    _remember_clear_outcome(
+        target_id, bool(result["recognised_block_cleared"] or result["pane_changed"])
+    )
     if result["recognised_block_cleared"]:
         speak = (
             f"{result['blocking_before']} ekranı kapandı. Şimdi gönderebiliriz."

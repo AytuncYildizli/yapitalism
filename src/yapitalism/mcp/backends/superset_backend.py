@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -166,6 +168,26 @@ class SupersetBackend:
         self._contexts: dict[str, _AcceptanceContext] = {}
         self._workspace_of: dict[str, str] = {}
         self._adapters: dict[str, SupersetAdapter] = {}
+        # One lock per terminal, held across the WHOLE preflight and write.
+        #
+        # tmux has had this since the concurrency work; this path never did, and
+        # the guards it advertises as `client` are only real if nothing interleaves
+        # them. Two concurrent sends could both read the same revision, both judge
+        # the prompt EMPTY, and both write — the client-side revision and
+        # empty-prompt checks reduced to decoration, which is the exact class of
+        # claim this project refuses to make.
+        self._terminal_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
+        self._locks_guard = threading.Lock()
+
+    def _terminal_lock(self, target_id: str) -> threading.Lock:
+        """The lock for one terminal, created once.
+
+        `defaultdict` is not itself atomic across threads under free-threading, so
+        the creation is guarded. Keyed on `target_id`, which is what a caller
+        addresses — the same key `_adapter_for` rebinds on.
+        """
+        with self._locks_guard:
+            return self._terminal_locks[target_id]
 
     @property
     def namespace(self) -> str:
@@ -412,99 +434,104 @@ class SupersetBackend:
         never retried again — that answer means the terminal moved, and re-reading
         to get a fresher revision is precisely the mistake this docstring refuses.
         """
-        adapter = self._adapter_for(target_id)
-        try:
-            # BEFORE the write, not after. `dispatch` mutates the terminal, so a
-            # runtime check on its RESPONSE would be too late - the shell would
-            # already have run the text. tmux refuses up front; this path accepted
-            # an injected `runtime="shell"` as a successful send, which turns a
-            # misrouted voice turn into an executed command.
-            #
-            # listSessions is the host's own agent registry rather than a process
-            # scan, so unlike tmux it can be trusted before a write.
-            runtime = adapter.registry_runtime()
-            if runtime not in AGENT_RUNTIMES:
+        # Held across the ENTIRE transaction — runtime gate, snapshot, token,
+        # revision, prompt verdict, write. Anything less leaves the window two
+        # concurrent sends used: both read one revision, both judge the prompt
+        # empty, both write, and both receipts claim a guarded delivery.
+        with self._terminal_lock(target_id):
+            adapter = self._adapter_for(target_id)
+            try:
+                # BEFORE the write, not after. `dispatch` mutates the terminal, so a
+                # runtime check on its RESPONSE would be too late - the shell would
+                # already have run the text. tmux refuses up front; this path accepted
+                # an injected `runtime="shell"` as a successful send, which turns a
+                # misrouted voice turn into an executed command.
+                #
+                # listSessions is the host's own agent registry rather than a process
+                # scan, so unlike tmux it can be trusted before a write.
+                runtime = adapter.registry_runtime()
+                if runtime not in AGENT_RUNTIMES:
+                    return SendOutcome(
+                        phase="rejected_not_an_agent",
+                        dispatched=False,
+                        runtime=runtime,
+                        reason=f"pane is running {runtime or 'something unrecognised'}",
+                    )
+                baseline = adapter.snapshot(max_lines=1000)
+                if canary is not None:
+                    adapter.validate_canary(
+                        canary, baseline_text=baseline.text, submitted_text=text
+                    )
+                # One POST. An ambiguous transport failure is surfaced, never retried.
+                result = adapter.dispatch(
+                    text,
+                    expected_revision=baseline.revision,
+                    client_token=client_token,
+                    confirm=True,
+                )
+                overridden = False
+                if override_host_prompt_check and self._override_allowed(result, baseline.text):
+                    self._record_override(target_id, result.target_runtime, baseline.revision)
+                    result = adapter.dispatch(
+                        text,
+                        # The SAME revision the verdict was made against. Not a re-read.
+                        expected_revision=baseline.revision,
+                        # A fresh token: the host already saw and refused the first one,
+                        # and reusing it invites a duplicate verdict for a write that
+                        # never happened.
+                        client_token=f"{client_token}-prompt-override",
+                        confirm=True,
+                        require_empty_prompt=False,
+                    )
+                    overridden = True
+            except (TrpcError, ValueError) as error:
+                raise BackendError(str(error)) from None
+            if result.target_runtime not in AGENT_RUNTIMES:
+                # Defence in depth: the pre-flight said agent and the host now says
+                # otherwise, so the registry went stale in between. The write already
+                # happened and cannot be recalled; refusing to REPORT it as delivered is
+                # what is left, and it beats a receipt calling a shell write an
+                # instruction the agent received.
                 return SendOutcome(
                     phase="rejected_not_an_agent",
                     dispatched=False,
-                    runtime=runtime,
-                    reason=f"pane is running {runtime or 'something unrecognised'}",
+                    runtime=result.target_runtime,
+                    reason="host reported a non-agent runtime after the write",
                 )
-            baseline = adapter.snapshot(max_lines=1000)
-            if canary is not None:
-                adapter.validate_canary(
-                    canary, baseline_text=baseline.text, submitted_text=text
+            if result.dispatched:
+                # Only a write that actually landed leaves acceptance context, and it is
+                # keyed by the operation rather than stored on the backend.
+                #
+                # Both halves were bugs. The singleton fields meant a second send
+                # overwrote the first's proof context before the first awaited, so a
+                # concurrent A-send/B-send/A-await proved A's canary against B's
+                # evidence - FastMCP runs sync tools on a threadpool, so that is a real
+                # interleaving, not a theoretical one. And writing unconditionally meant
+                # a REFUSED send clobbered the context of a successful one.
+                self._contexts[client_token] = _AcceptanceContext(
+                    target_id=target_id, baseline=baseline, submitted_text=text
                 )
-            # One POST. An ambiguous transport failure is surfaced, never retried.
-            result = adapter.dispatch(
-                text,
-                expected_revision=baseline.revision,
-                client_token=client_token,
-                confirm=True,
-            )
-            overridden = False
-            if override_host_prompt_check and self._override_allowed(result, baseline.text):
-                self._record_override(target_id, result.target_runtime, baseline.revision)
-                result = adapter.dispatch(
-                    text,
-                    # The SAME revision the verdict was made against. Not a re-read.
-                    expected_revision=baseline.revision,
-                    # A fresh token: the host already saw and refused the first one,
-                    # and reusing it invites a duplicate verdict for a write that
-                    # never happened.
-                    client_token=f"{client_token}-prompt-override",
-                    confirm=True,
-                    require_empty_prompt=False,
-                )
-                overridden = True
-        except (TrpcError, ValueError) as error:
-            raise BackendError(str(error)) from None
-        if result.target_runtime not in AGENT_RUNTIMES:
-            # Defence in depth: the pre-flight said agent and the host now says
-            # otherwise, so the registry went stale in between. The write already
-            # happened and cannot be recalled; refusing to REPORT it as delivered is
-            # what is left, and it beats a receipt calling a shell write an
-            # instruction the agent received.
             return SendOutcome(
-                phase="rejected_not_an_agent",
-                dispatched=False,
+                capabilities_override=HOST_GUARDED_PROMPT_OVERRIDDEN if overridden else None,
+                phase=result.phase,
+                dispatched=result.dispatched,
                 runtime=result.target_runtime,
-                reason="host reported a non-agent runtime after the write",
+                revision_before=result.revision_before,
+                revision_after=result.revision_after,
+                delivery_ref=result.delivery_id,
+                # A refusal names what was wrong; only a dispatched send falls back to
+                # the prompt caveat. Reporting "prompt_not_verified" for
+                # rejected_prompt_not_empty read like a YELLOW footnote on a RED.
+                reason=(
+                    self._refusal_reason(target_id, result.phase, baseline.text, result.target_runtime)
+                    if not result.dispatched
+                    else (
+                        "host_prompt_check_overridden"
+                        if overridden
+                        else ("" if result.prompt_verified else "prompt_not_verified")
+                    )
+                ),
             )
-        if result.dispatched:
-            # Only a write that actually landed leaves acceptance context, and it is
-            # keyed by the operation rather than stored on the backend.
-            #
-            # Both halves were bugs. The singleton fields meant a second send
-            # overwrote the first's proof context before the first awaited, so a
-            # concurrent A-send/B-send/A-await proved A's canary against B's
-            # evidence - FastMCP runs sync tools on a threadpool, so that is a real
-            # interleaving, not a theoretical one. And writing unconditionally meant
-            # a REFUSED send clobbered the context of a successful one.
-            self._contexts[client_token] = _AcceptanceContext(
-                target_id=target_id, baseline=baseline, submitted_text=text
-            )
-        return SendOutcome(
-            capabilities_override=HOST_GUARDED_PROMPT_OVERRIDDEN if overridden else None,
-            phase=result.phase,
-            dispatched=result.dispatched,
-            runtime=result.target_runtime,
-            revision_before=result.revision_before,
-            revision_after=result.revision_after,
-            delivery_ref=result.delivery_id,
-            # A refusal names what was wrong; only a dispatched send falls back to
-            # the prompt caveat. Reporting "prompt_not_verified" for
-            # rejected_prompt_not_empty read like a YELLOW footnote on a RED.
-            reason=(
-                self._refusal_reason(target_id, result.phase, baseline.text, result.target_runtime)
-                if not result.dispatched
-                else (
-                    "host_prompt_check_overridden"
-                    if overridden
-                    else ("" if result.prompt_verified else "prompt_not_verified")
-                )
-            ),
-        )
 
     def _override_allowed(self, result: object, baseline_text: str) -> bool:
         """The hard whitelist. Every clause is a separate way to say no.

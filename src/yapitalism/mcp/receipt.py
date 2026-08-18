@@ -109,6 +109,8 @@ def build_receipt(
     send: SendOutcome,
     acceptance: AcceptanceOutcome,
     capabilities: BackendCapabilities,
+    *,
+    clearing_known_useless: bool = False,
 ) -> Receipt:
     degraded = capabilities.degraded
     client = capabilities.client_enforced
@@ -121,7 +123,9 @@ def build_receipt(
             phase=send.phase,
             accepted=False,
             reason=send.reason or send.phase,
-            speak=_speak_rejected(send.phase, send.reason, agent),
+            speak=_speak_rejected(
+                send.phase, send.reason, agent, clearing_known_useless
+            ),
             missing_guarantees=degraded,
             client_guarantees=client,
         )
@@ -201,7 +205,12 @@ def _agent_name(runtime: str) -> str:
     return runtime.strip() or "ajan"
 
 
-def _speak_rejected(phase: str, reason: str = "", agent: str = "ajan") -> str:
+def _speak_rejected(
+    phase: str,
+    reason: str = "",
+    agent: str = "ajan",
+    clearing_known_useless: bool = False,
+) -> str:
     """One shape: GÖNDERİLMEDİ, why, and the way out.
 
     The lead word is fixed. A refusal is the one case where the operator can
@@ -227,9 +236,20 @@ def _speak_rejected(phase: str, reason: str = "", agent: str = "ajan") -> str:
     if phase == "rejected_confirm_prompt":
         return f"Gönderilmedi: {agent} bir onay bekliyor."
     if phase == "rejected_prompt_not_empty":
+        if clearing_known_useless:
+            return (
+                "Gönderilmedi: prompt alanında bekleyen metin var ve temizlemeyi "
+                f"denedim, {agent} tuşlara cevap vermiyor. Bu panele makinede "
+                "bakman gerekiyor."
+            )
         return (
             "Gönderilmedi: prompt alanında bekleyen metin var. İstersen "
             "temizleyip tekrar deneyebilirim."
+        )
+    if phase == "rejected_prompt_unreadable" and clearing_known_useless:
+        return (
+            "Gönderilmedi: prompt alanı okunamıyor ve temizlemeyi denedim, "
+            f"{agent} tuşlara cevap vermiyor. Bu panele makinede bakman gerekiyor."
         )
     if phase == "rejected_prompt_unreadable":
         # Previously fell through to the generic line, so a real and specific

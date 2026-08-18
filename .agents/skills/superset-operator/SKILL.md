@@ -63,7 +63,7 @@ Applies only when a send genuinely must go through Superset's own MCP. It cannot
 
 `agents_list_resumable`, `agents_resume` and `agents_await_resume` are built but not deployed to any MCP server this client can reach. Do not call them. If the user asks to restart a dead agent, say the capability is not connected yet rather than attempting it. The contract below applies once it is.
 
-- "Devam et", "yeniden başlat", "kaldığı yerden devam" about an agent that has **exited** is a resume, not a `terminals_send`. A live session takes `terminals_send`; only a dead one takes `agents_resume`.
+- "Devam et", "yeniden başlat", "kaldığı yerden devam" about an agent that has **exited** is a resume, not a send. A live session takes `yapitalism.pane_send`; only a dead one takes a resume.
 - Flow, in order: resolve the workspace with `targets_resolve_spoken` → `agents_list_resumable` for that workspace → one confirmation sentence → `agents_resume` → `agents_await_resume` exactly once. `targets_resolve_spoken` ranks live targets only, so dead agents are chosen from `agents_list_resumable`, never guessed.
 - Resume is **delete-class**, stronger than `terminals_send`: it replaces a session and can discard in-memory context. Name the workspace, the agent, and the action in one sentence and get an explicit yes. Never synthesize it from a fragment such as "kimi" or "devam" alone.
 - Skip any row with `resumable:false` — it cannot be restored and must not be offered.
@@ -108,7 +108,11 @@ Applies only when a send genuinely must go through Superset's own MCP. It cannot
 - "Superset durumunu söyle" → `hosts_list`, then live workspace/agent lists; read-only summary.
 - "X workspace'ine geç" → resolve X from live workspace list and retain it as the active target for the conversation.
 - "Claude/Codex session'ının son çıktısını oku" → resolve the target session and use terminal read tools only.
-- "Şunu gönder" → resolve/confirm the active canonical workspace/session, call `terminals_send` once, then `terminals_await_delivery` once and speak its receipt.
+- "Şunu gönder" → resolve/confirm the target pane with `yapitalism.panes_list`, then call
+  `yapitalism.pane_send` ONCE with `prove_acceptance: true` and speak its receipt.
+  Not `terminals_send`: the rule at the top of this file says every send goes through
+  `pane_send`, and this line used to say the opposite. A recipe beats a principle in
+  practice, so the recipe is the thing that has to be right.
 - "Yeni agent başlat" → require explicit agent type and workspace, create only one agent, then verify it appears.
 
 If the `superset` MCP server or OAuth is unavailable, say exactly that and stop. Do not fall back to UI automation.
