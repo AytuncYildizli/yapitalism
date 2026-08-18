@@ -479,3 +479,141 @@ class SendContractTests(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class ConcurrentSendsAreSerialisedTests(unittest.TestCase):
+    """The client guards are only real if nothing interleaves them.
+
+    tmux has held a per-pane lock since the concurrency work; this path never did.
+    Two sends could both read one revision, both judge the prompt EMPTY, and both
+    write — reducing `optimistic_revision: client` and `empty_prompt_check: client`
+    to decoration. Reported by the pre-announcement council and confirmed by
+    reading: there was no lock anywhere in the Superset path.
+
+    The barrier below makes the interleaving deterministic rather than hoping for
+    it: the first send is held inside its transaction until the second has had time
+    to try, so an unlocked implementation fails every run instead of one in fifty.
+    """
+
+    def _racing_host(self) -> tuple[Any, dict[str, Any]]:
+        """A host that pauses the first send BETWEEN its snapshot and its write.
+
+        That gap is the whole race. The prompt check already stops a second send
+        that snapshots AFTER a write lands — which is why an earlier version of this
+        test could not tell a locked run from an unlocked one. The window that
+        matters is the one where two sends read the same pre-write screen, both
+        judge it empty on the same revision, and both then write.
+        """
+        import threading
+
+        state: dict[str, Any] = {
+            "writes": [],
+            # Reads that arrived while another send was parked mid-transaction.
+            # Counting "snapshots before the first write" does not work: one send
+            # legitimately snapshots twice, once for the backend baseline and once
+            # inside the client-guarded dispatch.
+            "reads_during_pause": 0,
+            "paused": False,
+            "first_snapshot_served": threading.Event(),
+            "let_first_proceed": threading.Event(),
+        }
+
+        def responder(method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+            if path.endswith("terminal.snapshot"):
+                if state["paused"]:
+                    state["reads_during_pause"] += 1
+                elif not state["first_snapshot_served"].is_set():
+                    state["first_snapshot_served"].set()
+                    # Park this send holding a pre-write snapshot. Anything that
+                    # reads the terminal now is racing it.
+                    state["paused"] = True
+                    state["let_first_proceed"].wait(timeout=5)
+                    state["paused"] = False
+                return result(dict(REAL_SNAPSHOT))
+            if path.endswith("terminal.send"):
+                if not payload.get("terminalId"):
+                    return zod_400(UNGUARDED_SEND_ISSUES)
+                state["writes"].append(payload["text"])
+                return result({"terminalId": TERMINAL})
+            return real_host()(method, path, payload)
+
+        return responder, state
+
+    def _run_race(self, backend: Any, state: dict[str, Any]) -> None:
+        import threading
+
+        def send(token: str) -> None:
+            try:
+                backend.send(
+                    f"superset:{TERMINAL}", f"from {token}", canary=None,
+                    client_token=token,
+                )
+            except Exception:
+                pass
+
+        first = threading.Thread(target=send, args=("a",))
+        first.start()
+        self.assertTrue(
+            state["first_snapshot_served"].wait(timeout=5),
+            "the first send never took a snapshot",
+        )
+        second = threading.Thread(target=send, args=("b",))
+        second.start()
+        # Give the second every chance to run its guards on the stale screen.
+        second.join(timeout=2.0)
+        state["let_first_proceed"].set()
+        first.join(timeout=10)
+        second.join(timeout=10)
+
+    def test_no_send_reads_the_screen_while_another_holds_a_pre_write_snapshot(self) -> None:
+        """The invariant the lock provides.
+
+        NOT "only one send wins" — two sequential sends to an agent that went idle
+        again should both be delivered. What must never happen is two sends
+        authorising writes from the same pre-write state.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            responder, state = self._racing_host()
+            with FakeTrpcServer(responder) as server:
+                backend = SupersetBackend(
+                    manifest_path=write_manifest(tmp, server.endpoint)
+                )
+                self._run_race(backend, state)
+        self.assertEqual(
+            state["reads_during_pause"], 0,
+            "a second send read the terminal while the first was mid-transaction",
+        )
+        self.assertEqual(state["writes"], ["from a", "from b"], "writes were reordered")
+
+    def test_without_the_lock_two_sends_read_the_same_stale_screen(self) -> None:
+        """Negative control, so the test above cannot pass for the wrong reason.
+
+        With `_terminal_lock` handing out a fresh lock per call — which is what
+        having no lock amounts to — the second send snapshots the same pre-write
+        screen and proceeds on it.
+        """
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmp:
+            responder, state = self._racing_host()
+            with FakeTrpcServer(responder) as server:
+                backend = SupersetBackend(
+                    manifest_path=write_manifest(tmp, server.endpoint)
+                )
+                backend._terminal_lock = lambda target_id: threading.Lock()  # type: ignore[method-assign]
+                self._run_race(backend, state)
+        self.assertGreaterEqual(
+            state["reads_during_pause"], 1,
+            "the unlocked run did not race, so the locked test proves nothing",
+        )
+
+    def test_the_lock_is_per_terminal_not_global(self) -> None:
+        """Serialising every terminal behind one lock would make the host a queue."""
+        with tempfile.TemporaryDirectory() as tmp, FakeTrpcServer(real_host()) as server:
+            backend = SupersetBackend(manifest_path=write_manifest(tmp, server.endpoint))
+            self.assertIsNot(
+                backend._terminal_lock("superset:a"), backend._terminal_lock("superset:b")
+            )
+            self.assertIs(
+                backend._terminal_lock("superset:a"), backend._terminal_lock("superset:a")
+            )

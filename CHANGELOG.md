@@ -6,6 +6,62 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-08-18
+
+Four defects, from a pre-announcement audit by four independent models plus one
+found by driving 0.2.5 by hand. Each was confirmed against the running system
+before being believed; two of the models' loudest findings did not survive that
+check and are recorded below as not-defects.
+
+### Fixed
+
+- **A shell could classify as an agent, and a spoken instruction would run as a
+  command.** `classify_tree` searched every token of every descendant process, so a
+  plain shell with `python3 -c '...' codex` in the background reported
+  `runtime="codex"`. Measured on an isolated tmux socket: the pane came back as
+  codex while `pane_current_command` was `zsh`. It now matches argv[0] — the
+  executable — which was chosen by measuring a live codex pane rather than
+  reasoning about one: the pane process is `node /opt/homebrew/bin/codex` and its
+  child execs the vendored `codex`, so the tree walk still finds real agents while
+  a word in a child's arguments no longer counts. This is the boundary the function
+  exists to be, and it had a way through it.
+- **A refusal kept offering a remedy that had already failed.** A wedged pane
+  produced: refusal offering `pane_clear` → clear reports nothing changed → the
+  same refusal, offering the same clear. Every sentence true, the sequence a loop,
+  and a voice operator has no other way out. Clear outcomes are now remembered per
+  pane, bounded, and forgotten when a pane recovers; the second refusal says the
+  pane is not responding to keys and names the machine as the place to look.
+- **The receipt reported the backend's standing guarantees instead of this write's.**
+  `SendOutcome.capabilities_override` exists for the send that overrules the host's
+  prompt check and therefore enforces one guarantee fewer. It was being set and
+  never read. Its own docstring calls that "a lie shaped exactly like the one the
+  enforcement levels exist to prevent".
+- **The Superset send had no per-terminal lock.** tmux has held one since the
+  concurrency work; this path never did, so two sends could read the same pre-write
+  screen, both judge the prompt empty on the same revision, and both write —
+  reducing `optimistic_revision: client` and `empty_prompt_check: client` to
+  decoration. The whole transaction is now serialised per terminal, with a
+  barrier-driven test and a negative control that fails if the lock is removed.
+- **The operator skill told the model to bypass the receipt layer.** Its rules say
+  every send goes through `pane_send`; its command recipe said call
+  `terminals_send`, which returns `{terminalId, submitted}` and can never be
+  proven. A recipe beats a principle in practice, so the recipe was the thing that
+  had to be right.
+
+### Checked and found sound
+
+Recorded because they were raised as blockers and the answer is now measured rather
+than argued:
+
+- **A screen echo cannot satisfy the canary.** `canary_instruction` splits the
+  marker across real words, so the submitted text never contains it contiguously;
+  the matcher rejects an echo of the instruction and accepts the agent printing the
+  marker, including hard-wrapped across a line break.
+- **YELLOW cannot lead to a duplicate send.** It never offers a resend, only to
+  look, and a repeat under the same client token is refused.
+
+331 tests, up from 316.
+
 ## [0.2.5] - 2026-08-16
 
 Driving 0.2.4 through its own MCP surface — the sequence a voice client actually

@@ -115,10 +115,25 @@ def classify_tree(rows: list[tuple[int, int, str]], pane_pid: int) -> str:
             continue
         seen.add(pid)
         names = _basenames(args)
+        # argv[0] ONLY — the executable, not every token on the command line.
+        #
+        # This matched any token anywhere in any descendant's argv, so a plain shell
+        # running `python3 -c '...' codex` in the background classified as codex.
+        # Measured on an isolated socket: a zsh pane reported runtime='codex' while
+        # pane_current_command was 'zsh'. That is the security boundary this function
+        # exists to be, inverted into a way through it — a spoken instruction typed
+        # into a shell and submitted is command execution.
+        #
+        # argv[0] still finds the real thing. Measured on a live codex pane: the pane
+        # process is `node /opt/homebrew/bin/codex` (argv[0] = node, no match) and its
+        # child execs `.../vendor/aarch64-apple-darwin/codex` (argv[0] = codex, match).
+        # An agent that never execs a binary of its own name reads as a shell, which
+        # over-refuses rather than typing into something unrecognised.
+        executable = names[0] if names else ""
         for needle, runtime in _AGENTS:
-            if needle in names:
+            if executable == needle:
                 return runtime
-        if names and names[0] in _SHELLS:
+        if executable in _SHELLS:
             saw_shell = True
         queue.extend(by_parent.get(pid, []))
     return "shell" if saw_shell else "unknown"
