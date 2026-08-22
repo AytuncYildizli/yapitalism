@@ -228,12 +228,23 @@ class ClientDetectionTests(unittest.TestCase):
         self.assertFalse(found["Cursor"])
         self.assertFalse(found["Claude Desktop"])
 
-    def test_codex_is_the_url_client_and_the_others_are_stdio(self) -> None:
-        # Codex takes --url; the rest spawn the process themselves. Getting this
-        # backwards produces a config that silently never connects.
+    def test_codex_and_hermes_take_a_url_and_the_others_are_stdio(self) -> None:
+        # Codex and Hermes take a URL; the rest spawn the process themselves.
+        # Getting this backwards produces a config that silently never connects.
         transports = {client.name: client.transport for client in detect_clients(Path("/nonexistent"))}
         self.assertEqual(transports["Codex"], "http")
+        self.assertEqual(transports["Hermes"], "http")
         self.assertEqual(transports["Claude Desktop"], "stdio")
+
+    def test_hermes_is_detected_by_its_config_file(self) -> None:
+        """Registered and driven end to end on 2026-08-22: tool discovery,
+        panes_list, and a canary-proven pane_send issued by Hermes itself."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".hermes").mkdir()
+            (home / ".hermes" / "config.yaml").write_text("mcp_servers: {}\n")
+            found = {client.name: client.present for client in detect_clients(home)}
+        self.assertTrue(found["Hermes"])
 
 
 if __name__ == "__main__":  # pragma: no cover
