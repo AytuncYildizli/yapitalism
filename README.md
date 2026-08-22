@@ -20,14 +20,19 @@ layer that decides what the voice is allowed to say.
 ## How it fits together
 
 ```
-voice client (ChatGPT / Codex today)
-    │  MCP over loopback HTTP — no public endpoint, no OAuth, no relay
+MCP client (Codex · Hermes · Claude Code · Claude Desktop · Cursor)
+    │  MCP over loopback — no public endpoint, no OAuth, no relay
     ▼
 yapitalism MCP server          panes_list · pane_read · pane_send
-    │
+    │                          panes_create · panes_resume · pane_clear
     ├── superset backend       local host-service over tRPC (127.0.0.1:48900)
     └── tmux backend           capture-pane / send-keys
 ```
+
+The agents it addresses: **codex, claude, kimi, opencode** — recognised by measurement (a
+process tree on tmux, the host's own agent registry on Superset), never by a caller's claim. A
+pane running anything else is refused, because typing into a shell and pressing Enter is running
+a command.
 
 The voice client never reaches your machine directly: it drives a local agent session, and that
 session talks to this server over `127.0.0.1`. Nothing is exposed to the network.
@@ -124,7 +129,9 @@ usable, which agent CLIs are on `PATH`, whether a Superset host is live and whic
 the guarantee table above filled in for you. It writes nothing except, if you say yes, the Superset
 manifest — and it names what is still missing with the exact command for each.
 
-Then talk to the voice app: *"list my panes"*, then *"send this to the Codex pane"*.
+Then talk to the voice app: *"list my panes"*, then *"send this to the Codex pane"*. Any MCP
+client works the same way — Hermes, Claude Code, Claude Desktop and Cursor registrations are
+printed by `yapitalism setup` for exactly the machine it is run on.
 
 `YAPITALISM_MCP_PORT` moves the port if 8792 is taken. `YAPITALISM_TMUX_SOCKET` targets a
 non-default tmux server.

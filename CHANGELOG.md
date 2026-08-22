@@ -6,6 +6,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-08-22
+
+### Added
+
+- **OpenCode is a relay runtime.** Recognised on both backends — the process tree
+  on tmux, the host's agent registry on Superset — with its own measured prompt
+  detector (OpenCode 1.18.16's composer and status line, read off a live pane).
+  Send, read, clear and receipts work like the other three agents; `panes_create`
+  and `panes_resume` deliberately do not start it — this relays to OpenCode panes,
+  it does not launch them. Verified live: guarded relay smoke with an
+  acceptance/readback receipt against a real OpenCode Superset pane.
+- **Hermes is a client.** Registered against the same loopback HTTP service Codex
+  uses and driven end to end from Hermes itself: tool discovery, `panes_list`, and
+  a canary-proven `pane_send` that came back GREEN. `yapitalism setup` now detects
+  `~/.hermes/config.yaml` and prints the registration as the config block Hermes
+  actually reads, because its interactive `mcp add` cannot be scripted.
+
+### Changed
+
+- The README's architecture diagram names the five clients this has actually been
+  registered with (Codex, Hermes, Claude Code, Claude Desktop, Cursor) and the four
+  agent runtimes it addresses (codex, claude, kimi, opencode).
+
+338 tests.
+
 ## [0.2.6] - 2026-08-18
 
 Four defects, from a pre-announcement audit by four independent models plus one
