@@ -226,6 +226,11 @@ def _speak_rejected(
             f"{agent} kendi öneri metnini yazılmış sanıyor. Temizlemek burada "
             "işe yaramaz."
         )
+    if reason == "host_says_unreadable_screen_says_empty":
+        return (
+            "Gönderilmedi: OpenCode prompt boş görünüyor ama doğrulanamadı. "
+            "Kontrollü gönderim için açık onay gerekiyor."
+        )
     if phase == "rejected_trust_prompt":
         return (
             f"Gönderilmedi: {agent} bir güven onayı ekranında bekliyor, oraya "

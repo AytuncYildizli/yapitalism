@@ -406,10 +406,10 @@ class SupersetBackend:
         empty-prompt requirement and a no-repeat flag, and it refuses the write
         itself if any of them no longer hold.
 
-        `override_host_prompt_check` addresses one measured defect and nothing
-        else. The host's detector counts an agent's own placeholder suggestion as
-        staged input, so `terminal.send` to such a pane is refused forever and
-        `pane_clear` cannot help — there is nothing in the prompt to clear.
+        `override_host_prompt_check` addresses two measured detector defects and
+        nothing else. The host counts Codex's own placeholder suggestion as staged
+        input, and reports OpenCode's observed empty composer as unreadable. In both
+        cases `pane_clear` cannot help — there is nothing in the prompt to clear.
 
         When it is set, the refused send is re-issued with `requireEmptyPrompt`
         false. That flag is ours to set; the host defaults it off. `expectRevision`
@@ -420,12 +420,14 @@ class SupersetBackend:
 
         The retry fires only when every one of these holds, as a hard whitelist:
 
-        - the host's refusal was exactly `rejected_prompt_not_empty`;
+        - the refusal/runtime pair is exactly Codex +
+          `rejected_prompt_not_empty`, or OpenCode +
+          `rejected_prompt_unreadable`;
         - this side judged the prompt EMPTY on **the same snapshot whose revision
           was passed**, never a fresh re-read — a fresh revision would authorise a
           write at a moment nobody judged, which is worse than the thing it fixes;
-        - the runtime is `codex`. `claude` and `kimi` have no observed placeholder
-          entries, so both detectors agree there and the refusal is real;
+        - Claude and Kimi remain ineligible because no measured detector defect
+          exists for either runtime;
         - the caller asked for it. This is never automatic: overruling a host
           verdict is a decision, and the only party who knows whether that text is
           the agent's suggestion or something a person typed is the person.
@@ -542,15 +544,13 @@ class SupersetBackend:
         """
         phase = getattr(result, "phase", "")
         runtime = getattr(result, "target_runtime", "")
-        if phase != "rejected_prompt_not_empty":
-            # The only refusal where this side holds falsifying evidence. A trust
-            # prompt, a stale revision or a duplicate are not this, and nothing in
-            # the mechanism would notice the difference — so the scope is explicit.
-            return False
-        if runtime != "codex":
-            # claude and kimi have no observed placeholder entries, so this side's
-            # detector agrees with the host there. Overriding would mean overruling
-            # a verdict this side did not contradict.
+        expected_phase = {
+            "codex": "rejected_prompt_not_empty",
+            "opencode": "rejected_prompt_unreadable",
+        }.get(runtime)
+        if phase != expected_phase:
+            # A trust prompt, stale revision, duplicate, or any unmeasured
+            # runtime/refusal pair is outside the override contract.
             return False
         # The verdict must come from the text of the snapshot whose revision was
         # passed to the host. Re-reading here would be the bug: the write would be
@@ -574,7 +574,11 @@ class SupersetBackend:
                 "target_id": target_id,
                 "runtime": runtime,
                 "revision": revision,
-                "reason": "host_says_occupied_screen_says_empty",
+                "reason": (
+                    "host_says_unreadable_screen_says_empty"
+                    if runtime == "opencode"
+                    else "host_says_occupied_screen_says_empty"
+                ),
             }
             with path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(row, sort_keys=True) + "\n")
@@ -598,10 +602,18 @@ class SupersetBackend:
         advice that had already been shown not to work, because there is nothing
         there to clear. Distinguishing the two says the true thing instead.
         """
-        if phase != "rejected_prompt_not_empty":
-            return phase
-        if detect_prompt_state(pane_text, runtime) == EMPTY:
+        if (
+            runtime == "codex"
+            and phase == "rejected_prompt_not_empty"
+            and detect_prompt_state(pane_text, runtime) == EMPTY
+        ):
             return "host_says_occupied_screen_says_empty"
+        if (
+            runtime == "opencode"
+            and phase == "rejected_prompt_unreadable"
+            and detect_prompt_state(pane_text, runtime) == EMPTY
+        ):
+            return "host_says_unreadable_screen_says_empty"
         return phase
 
     def await_acceptance(

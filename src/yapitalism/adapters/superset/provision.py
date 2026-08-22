@@ -298,7 +298,7 @@ def probe_binding(
             runtime = agent.get("agentId") if isinstance(agent, dict) else None
             # Prefer a terminal running an agent: binding to a plain shell by
             # default would make the first send address a shell prompt.
-            if runtime in ("codex", "claude", "kimi"):
+            if runtime in ("codex", "claude", "kimi", "opencode"):
                 name = workspace.get("name")
                 return Binding(
                     workspace_id=workspace_id,
@@ -330,7 +330,7 @@ def probe_binding(
                 terminal_count=0,
             )
     raise ProvisionError(
-        "the host answered but no terminal is running codex, claude or kimi. "
+        "the host answered but no terminal is running codex, claude, kimi or opencode. "
         "Start an agent in a Superset terminal, then run this again"
     )
 

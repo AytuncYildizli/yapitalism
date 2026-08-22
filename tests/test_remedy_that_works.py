@@ -155,6 +155,12 @@ class ArgvZeroIsTheExecutableTests(unittest.TestCase):
         ]
         self.assertEqual(classify_tree(rows, 26815), "codex")
 
+    def test_opencode_executable_is_recognised_without_matching_arguments(self) -> None:
+        from yapitalism.mcp.tmux import classify_tree
+
+        rows = [(300, 1, "-zsh"), (301, 300, "/opt/homebrew/bin/opencode --mini")]
+        self.assertEqual(classify_tree(rows, 300), "opencode")
+
     def test_a_path_containing_the_name_is_not_enough(self) -> None:
         """`/home/codex/scripts/run.sh` is a path, not an agent."""
         from yapitalism.mcp.tmux import classify_tree
