@@ -40,6 +40,19 @@ from test_superset_adapter import (
 
 PLACEHOLDER = "output\n\n› Use /skills to list available skills"
 REAL_TEXT = "output\n\n› half a typed thought"
+OPENCODE_EMPTY = (
+    "┃\n"
+    '┃  Ask anything... "Fix a TODO in the codebase"\n'
+    "┃\n"
+    "┃  Build · Ox Alpha Free (Unlimited)"
+)
+OPENCODE_EMPTY_AFTER_RESPONSE = (
+    "answer transcript\n"
+    "┃\n"
+    "┃\n"
+    "┃\n"
+    "┃  Build · Ox Alpha Free (Unlimited) OpenCode Zen"
+)
 
 
 def host(
@@ -47,6 +60,7 @@ def host(
     *,
     screen: str = PLACEHOLDER,
     runtime: str = "codex",
+    first_phase: str = "rejected_prompt_not_empty",
     second_phase: str = "injected",
 ) -> Any:
     """A host that refuses the guarded send and accepts the unguarded retry."""
@@ -65,13 +79,16 @@ def host(
         if path.endswith("terminal.send"):
             sends.append(payload)
             first = len(sends) == 1
-            phase = "rejected_prompt_not_empty" if first else second_phase
+            phase = first_phase if first else second_phase
             injected = phase == "injected"
             return result(
                 {
                     "terminalId": TERMINAL,
                     "phase": phase,
-                    "promptStatus": "has_text" if first else "empty",
+                    "promptStatus": (
+                        "unknown" if first and first_phase == "rejected_prompt_unreadable"
+                        else ("has_text" if first else "empty")
+                    ),
                     "target": {"runtime": runtime},
                     "deliveryId": "11111111-1111-4111-8111-111111111111" if injected else None,
                     "submitSent": injected,
@@ -127,6 +144,62 @@ class OverrideFenceTests(unittest.TestCase):
         self.assertIs(outcome.capabilities_override, HOST_GUARDED_PROMPT_OVERRIDDEN)
         self.assertEqual(outcome.capabilities_override.optimistic_revision, "host")
         self.assertEqual(outcome.capabilities_override.empty_prompt_check, "client")
+
+    def test_opencode_unreadable_empty_frame_requires_and_honours_the_flag(self) -> None:
+        def opencode_host(sends: list[dict[str, Any]]) -> Any:
+            return host(
+                sends,
+                screen=OPENCODE_EMPTY,
+                runtime="opencode",
+                first_phase="rejected_prompt_unreadable",
+            )
+
+        without, sends = self.send(opencode_host)
+        self.assertEqual(without.phase, "rejected_prompt_unreadable")
+        self.assertEqual(len(sends), 1)
+
+        with_override, sends = self.send(
+            opencode_host,
+            override_host_prompt_check=True,
+        )
+        self.assertEqual(with_override.phase, "injected")
+        self.assertTrue(with_override.dispatched)
+        self.assertEqual(len(sends), 2)
+        self.assertFalse(sends[1]["requireEmptyPrompt"])
+
+    def test_opencode_post_response_empty_frame_honours_the_flag(self) -> None:
+        def opencode_host(sends: list[dict[str, Any]]) -> Any:
+            return host(
+                sends,
+                screen=OPENCODE_EMPTY_AFTER_RESPONSE,
+                runtime="opencode",
+                first_phase="rejected_prompt_unreadable",
+            )
+
+        outcome, sends = self.send(
+            opencode_host,
+            override_host_prompt_check=True,
+        )
+        self.assertEqual(outcome.phase, "injected")
+        self.assertTrue(outcome.dispatched)
+        self.assertEqual(len(sends), 2)
+
+    def test_opencode_override_refuses_a_nonempty_or_unmeasured_frame(self) -> None:
+        def occupied_opencode_host(sends: list[dict[str, Any]]) -> Any:
+            return host(
+                sends,
+                screen="┃\n┃  half a typed thought\n┃\n┃  Build · Ox Alpha Free",
+                runtime="opencode",
+                first_phase="rejected_prompt_unreadable",
+            )
+
+        outcome, sends = self.send(
+            occupied_opencode_host,
+            override_host_prompt_check=True,
+        )
+        self.assertEqual(outcome.phase, "rejected_prompt_unreadable")
+        self.assertFalse(outcome.dispatched)
+        self.assertEqual(len(sends), 1)
 
     def test_it_does_not_fire_when_this_side_also_sees_text(self) -> None:
         """The override rests entirely on holding falsifying evidence.

@@ -68,7 +68,7 @@ def panes_list() -> dict[str, object]:
 
     Each pane carries:
       - `target_id`, namespaced (`tmux:%0`). Use it verbatim for any later call.
-      - `runtime`: codex, claude, kimi, shell, or unknown. Anything that is not
+      - `runtime`: codex, claude, kimi, opencode, shell, or unknown. Anything that is not
         an agent runtime is NOT addressable — a pane that used to run an agent
         and now runs a plain shell would turn an instruction into a shell
         command.
@@ -298,9 +298,10 @@ def pane_send(
     command — and then the result can never be better than YELLOW.
 
     `timeout_seconds` is an IDLE timeout, not a total one. The wait restarts
-    whenever the pane changes, up to a hard ceiling, so an agent that thinks for
-    a minute and then answers is still verified. Pane movement only decides
-    whether to keep waiting; it never counts as acceptance.
+    whenever the pane changes. The default hard ceiling is 30 seconds; asking for
+    a longer idle timeout also raises that ceiling to at least the requested value,
+    so a slow runtime is not guaranteed to time out before its own idle window.
+    Pane movement only decides whether to keep waiting; it never counts as acceptance.
 
     A YELLOW carries which kind it is, described by what was measured:
     `canary_timeout_pane_moving` means the pane's text was still changing —
@@ -379,6 +380,10 @@ def pane_send(
                 target_id,
                 canary,
                 idle_timeout=timeout_seconds,
+                # A caller asking for a longer idle window must not hit the hard
+                # ceiling before that window can elapse. Defaults remain bounded
+                # at 30 seconds; slow runtimes opt in by raising timeout_seconds.
+                max_wait=max(MAX_WAIT_SECONDS, timeout_seconds),
                 client_token=token,
             )
         except Exception as error:

@@ -366,6 +366,31 @@ class PromptDetectorSafetyTests(unittest.TestCase):
         both = "output\n\u203a\n\u203a Use /skills to list available skills"
         self.assertEqual(detect_prompt_state(both, "codex"), EMPTY)
 
+    def test_the_observed_opencode_empty_frame_is_recognised(self) -> None:
+        from yapitalism.prompt_state import EMPTY, UNKNOWN, detect_prompt_state
+
+        frame = (
+            "┃\n"
+            '┃  Ask anything... "Fix a TODO in the codebase"\n'
+            "┃\n"
+            "┃  Build · Ox Alpha Free (Unlimited)"
+        )
+        self.assertEqual(detect_prompt_state(frame, "opencode"), EMPTY)
+        after_response = (
+            "answer transcript\n"
+            "┃\n"
+            "┃\n"
+            "┃\n"
+            "┃  Build · Ox Alpha Free (Unlimited) OpenCode Zen"
+        )
+        self.assertEqual(detect_prompt_state(after_response, "opencode"), EMPTY)
+        # The words without the measured frame are transcript, not proof.
+        flat = 'Ask anything... "Fix a TODO in the codebase" BUILD Ox Alpha Free (Unlimited)'
+        self.assertEqual(detect_prompt_state(flat, "opencode"), UNKNOWN)
+        # Anything that is not the exact placeholder frame over-refuses.
+        staged = "┃\n┃  half a typed thought\n┃\n┃  Build · Ox Alpha Free (Unlimited)"
+        self.assertEqual(detect_prompt_state(staged, "opencode"), UNKNOWN)
+
 
 class RefusalWordingTests(unittest.TestCase):
     """A RED must never advise something that has been measured not to work, and

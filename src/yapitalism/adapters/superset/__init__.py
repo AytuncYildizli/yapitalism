@@ -65,8 +65,8 @@ _CLEAR_SEQUENCES: dict[str, str] = {
     "clear-line": "\x15",  # C-u, readline "kill line"
     "escape-twice": "\x1b\x1b",
 }
-_RUNTIMES = {"codex", "claude", "kimi", "shell", "unknown"}
-_AGENT_RUNTIMES = {"codex", "claude", "kimi"}
+_RUNTIMES = {"codex", "claude", "kimi", "opencode", "shell", "unknown"}
+_AGENT_RUNTIMES = {"codex", "claude", "kimi", "opencode"}
 
 
 class TrpcError(RuntimeError):
@@ -1047,7 +1047,7 @@ class SupersetAdapter:
         """The host's own agent for this terminal, or "unknown".
 
         The binding carries `agentId`, which is the host's vocabulary — `codex`,
-        `claude`, `kimi`, and a dozen more this project has no launcher for. The
+        `claude`, `kimi`, `opencode`, and more this project does not address. The
         ones we recognise pass; the rest read as "unknown" and the caller refuses,
         which over-refuses rather than writing into something unrecognised.
 

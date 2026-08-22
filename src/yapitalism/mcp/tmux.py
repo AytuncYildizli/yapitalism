@@ -33,6 +33,7 @@ _AGENTS: tuple[tuple[str, str], ...] = (
     ("codex", "codex"),
     ("claude", "claude"),
     ("kimi", "kimi"),
+    ("opencode", "opencode"),
 )
 
 

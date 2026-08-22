@@ -245,6 +245,14 @@ class AgentBindingTests(unittest.TestCase):
             )
             self.assertEqual(adapter.registry_runtime(), "codex")
 
+    def test_opencode_binding_is_an_addressable_agent_runtime(self) -> None:
+        opencode = [dict(REAL_AGENT_BINDINGS[0], agentId="opencode")]
+        with FakeTrpcServer(real_host(bindings=opencode)) as server, tempfile.TemporaryDirectory() as tmp:
+            adapter = SupersetAdapter(
+                SupersetConfig.from_manifest(write_manifest(tmp, server.endpoint))
+            )
+            self.assertEqual(adapter.registry_runtime(), "opencode")
+
     def test_a_terminal_with_no_binding_is_unknown_and_refused(self) -> None:
         """A live PTY with no agent is a plain terminal. Writing there runs a command."""
         with FakeTrpcServer(real_host(bindings=[])) as server, tempfile.TemporaryDirectory() as tmp:
@@ -258,7 +266,7 @@ class AgentBindingTests(unittest.TestCase):
         self.assertFalse(outcome.dispatched)
 
     def test_an_agent_this_project_cannot_launch_reads_as_unknown(self) -> None:
-        """The host knows a dozen agents; this project has launchers for three.
+        """The host knows more agents than this project can address safely.
 
         Over-refusing is the safe direction: `gemini` is genuinely an agent, and
         treating it as one we understand would be a guess about its prompt.

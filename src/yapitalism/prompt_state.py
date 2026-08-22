@@ -68,6 +68,15 @@ _PLACEHOLDERS: dict[str, tuple[str, ...]] = {
     "kimi": (),
 }
 
+# Observed on OpenCode 1.18.16 in a Superset terminal on 2026-08-22. OpenCode
+# does not draw a one-character input marker. Its empty composer has two observed
+# redraws: either an empty border, the rotating `Ask anything...` placeholder,
+# another empty border, then the active mode/model status; or, after a response,
+# three empty border rows immediately above that status. Requiring either complete
+# frame avoids treating the same words in transcript output as an empty prompt.
+_OPENCODE_EMPTY = re.compile(r'^┃\s+Ask anything\.\.\.\s+"[^"\n]+"\s*$')
+_OPENCODE_STATUS = re.compile(r"^┃\s+(?:Build|Plan)\s+·\s+.+$")
+
 #: How far back to look for the input line. The prompt is the last thing drawn,
 #: and scanning the whole scrollback would match a prompt from earlier in the
 #: session.
@@ -85,11 +94,32 @@ def detect_prompt_state(pane_text: str, runtime: str) -> str:
     optimistically empty: guessing that an unrecognised agent has a clear prompt
     is the one error that corrupts someone's text.
     """
+    lines = _strip_ansi(pane_text).rstrip().splitlines()
+    if runtime == "opencode":
+        tail = [line.strip() for line in lines[-16:]]
+        for index, line in enumerate(tail):
+            if (
+                _OPENCODE_STATUS.fullmatch(line)
+                and index >= 3
+                and tail[index - 3 : index] == ["┃", "┃", "┃"]
+            ):
+                return EMPTY
+        for index, line in enumerate(tail):
+            if not _OPENCODE_EMPTY.fullmatch(line):
+                continue
+            if index < 1 or index + 2 >= len(tail):
+                continue
+            if tail[index - 1] != "┃" or tail[index + 1] != "┃":
+                continue
+            if _OPENCODE_STATUS.fullmatch(tail[index + 2]):
+                return EMPTY
+        # No exact empty frame: do not guess which rendered row owns input.
+        return UNKNOWN
+
     markers = _MARKERS.get(runtime)
     if markers is None:
         return UNKNOWN
     placeholders = _PLACEHOLDERS.get(runtime, ())
-    lines = _strip_ansi(pane_text).rstrip().splitlines()
     # The LAST marker line is the live input line; everything above it is
     # transcript. Codex echoes each submitted prompt back with the same marker, so
     # scanning bottom-up and stopping at the first match is what tracks the composer.

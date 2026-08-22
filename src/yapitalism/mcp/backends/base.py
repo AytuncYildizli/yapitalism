@@ -169,7 +169,7 @@ class TerminalBackend(Protocol):
     def read_pane(self, target_id: str, lines: int) -> str: ...
 
 
-AGENT_RUNTIMES = frozenset({"codex", "claude", "kimi"})
+AGENT_RUNTIMES = frozenset({"codex", "claude", "kimi", "opencode"})
 
 
 def parse_target_id(target_id: str) -> tuple[str, str]:

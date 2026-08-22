@@ -28,9 +28,10 @@ from .adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
 from .adapters.superset.provision import HostRecord, ProvisionError, discover_hosts, select_host
 from .mcp.backends.base import BackendCapabilities
 
-#: The agents a pane may be running. Same list the tmux launcher table accepts,
-#: because offering to start something this tool cannot address would be a lie.
-AGENTS = ("codex", "claude", "kimi")
+#: The agents an addressable pane may be running. Superset owns its own launchers;
+#: tmux may support a narrower creation set when an agent's prompt cannot yet be
+#: judged safely by the client-side fallback.
+AGENTS = ("codex", "claude", "kimi", "opencode")
 
 _PROBE_TIMEOUT = 5
 
@@ -268,7 +269,7 @@ def next_steps(env: Environment) -> list[str]:
     steps: list[str] = []
     if not any(env.agents.values()):
         steps.append(
-            "install at least one agent CLI (codex, claude or kimi) — there is "
+            "install at least one agent CLI (codex, claude, kimi or opencode) — there is "
             "nothing to talk to without one"
         )
     if env.superset.host_live and not env.manifest_written:
