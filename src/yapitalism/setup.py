@@ -213,6 +213,11 @@ _CLIENTS: tuple[tuple[str, str, str], ...] = (
     ("Claude Code", ".claude.json", "stdio"),
     ("Claude Desktop", "Library/Application Support/Claude/claude_desktop_config.json", "stdio"),
     ("Cursor", ".cursor/mcp.json", "stdio"),
+    # Hermes speaks MCP over HTTP the way Codex does, and registered against the
+    # same loopback service end to end on 2026-08-22: tool discovery, panes_list,
+    # and a canary-proven pane_send driven by Hermes itself. Its `mcp add` is
+    # interactive-only, so the registration line names the config block instead.
+    ("Hermes", ".hermes/config.yaml", "http"),
 )
 
 

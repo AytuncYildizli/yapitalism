@@ -170,6 +170,13 @@ def ledger_migrate(source_path: Path, output_path: Path) -> int:
 
 _HTTP_FORM = "codex mcp add yapitalism --url http://127.0.0.1:8792/mcp"
 _STDIO_FORM = '{"mcpServers": {"yapitalism": {"command": "yapitalism-mcp", "args": ["--stdio"]}}}'
+# Hermes takes the same URL, but its `mcp add` insists on an interactive tool
+# picker, so the honest instruction is the config block it actually reads —
+# a command that stalls in a script is not an instruction.
+_HERMES_FORM = (
+    "add under mcp_servers: in ~/.hermes/config.yaml -> "
+    "yapitalism: {url: http://127.0.0.1:8792/mcp}"
+)
 
 
 def _mark(present: bool) -> str:
@@ -220,6 +227,7 @@ def render_setup(env: Environment) -> list[str]:
         "Registering the server with a client",
         "",
         f"  URL clients (Codex):     {_HTTP_FORM}",
+        f"  Hermes:                  {_HERMES_FORM}",
         f"  stdio clients (rest):    {_STDIO_FORM}",
     ]
     return lines
