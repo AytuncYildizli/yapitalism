@@ -106,6 +106,13 @@ Both backends reach GREEN, and GREEN means the same thing either way: the agent 
 one-time marker, so it received the text and processed it. The table is for diagnosing a machine,
 not something to reason about on every send.
 
+## Recipes
+
+The six tools compose into watchers worth having: a permission watch (nothing
+waits on a dialog silently — its first real catch was an agent holding a
+MetaMask token-launch approval), a provider-outage watch, an end-of-day digest.
+Working prompts in [docs/recipes.md](docs/recipes.md).
+
 ## Install
 
 Needs Python 3.11+ and `tmux`. Everything runs on your machine; nothing is exposed to the network.
