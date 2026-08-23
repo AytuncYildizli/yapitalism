@@ -1,5 +1,11 @@
 # ADR-0004: Ledger sequence is authoritative for receipt ordering
 
+> **Superseded (0.3.0, 2026-08-23).** The hash-chained CLI ledger and its claim
+> store were removed: the MCP path never consumed them, and a verification chain
+> nothing reads is decorative. Receipts live in the MCP surface; the adapter's
+> evidence objects remain as its API. This document stays as the record of what
+> was built and why it went.
+
 - Status: accepted
 - Date: 2026-08-01
 

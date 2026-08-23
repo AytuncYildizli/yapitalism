@@ -323,21 +323,5 @@ class Issue20RegistryEntryPoint(unittest.TestCase):
         self.assertIn("--stdio", args)
 
 
-class Issue21EvidenceBeforeAuthorization(unittest.TestCase):
-    def test_a_failed_ledger_append_leaves_no_consumable_claim(self) -> None:
-        """Write-ahead logging, in the component whose job is that evidence is
-        authoritative.
-
-        Reversed, a crash between issue and append left a live claim able to
-        authorize a confirmed mutation whose dry run was never recorded.
-        """
-        source = (REPO / "src/yapitalism/cli.py").read_text()
-        send = source[source.index("def superset_send(") :]
-        body = send[: send.index("\ndef ")]
-        append_at = body.index("ledger.append(dispatched.to_evidence(command_id))")
-        issue_at = body.index("claims.issue(")
-        self.assertLess(append_at, issue_at)
-
-
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
