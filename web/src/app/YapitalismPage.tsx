@@ -136,6 +136,9 @@ export function YapitalismPage() {
 							src="/goblin.svg"
 						/>
 						<div className="burst">We have API at home</div>
+						<p className="banNote">
+							banned from the system prompt. promoted to management.
+						</p>
 					</div>
 				</section>
 			</div>
