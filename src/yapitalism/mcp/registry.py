@@ -105,3 +105,31 @@ def _pane_payload(
         # never make.
         payload["missing_guarantees"] = list(degraded)
     return payload
+
+
+class PeerRegistry:
+    """Remote machines, resolvable by the namespace their panes carry.
+
+    Kept apart from the backend registry on purpose: a backend answers the
+    TerminalBackend protocol and this side builds its receipts; a peer answers
+    whole TOOLS and its receipts pass through verbatim. Collapsing the two would
+    invite exactly the restated-claim bug the split prevents.
+    """
+
+    def __init__(self) -> None:
+        from ..peers import load_peers
+        from .backends.remote_backend import RemotePeer
+
+        self._peers = {peer.name: RemotePeer(peer) for peer in load_peers()}
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(sorted(self._peers))
+
+    def owner_of(self, target_id: str):
+        """The peer whose namespace prefixes this id, or None for local ids."""
+        name = target_id.split(":", 1)[0]
+        return self._peers.get(name)
+
+    def all(self):
+        return [self._peers[name] for name in self.names]
