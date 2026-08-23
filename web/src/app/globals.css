@@ -361,3 +361,10 @@ h1 .hit{
 .installWide pre {
   overflow-x: auto;
 }
+
+/* One line under the hero goblin, for readers arriving from the news that a
+   certain system prompt now forbids goblins. Campaign language, like the burst
+   above it - the footer already carries the disclaimers. */
+.banNote{font-family:var(--mono,ui-monospace,monospace);font-size:.72rem;
+  text-transform:uppercase;letter-spacing:.08em;color:#5d5f52;
+  margin:.7rem 0 0;text-align:center}
