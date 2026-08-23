@@ -107,6 +107,34 @@ UNKNOWN_HOST = BackendCapabilities(
 )
 
 
+#: The host's agent-event vocabulary, mapped to the three states a caller can act
+#: on. The event names are the shipped bundle's own enum (read out of
+#: host-service.js on 2026-08-23, 28 names) and the mapping is deliberately
+#: conservative: only events that MEAN "a human must answer" map to
+#: waiting_input, only turn-ended events map to idle, and everything else recent
+#: means the agent is doing something. An event this table does not know reads as
+#: "running", never as "ready".
+_EVENT_STATES: dict[str, str] = {
+    "Stop": "idle",
+    "StopFailure": "idle",  # the stop hook failed; the turn still ended
+    "TeammateIdle": "idle",
+    "SessionEnd": "exited",
+    "PermissionRequest": "waiting_input",
+    "Elicitation": "waiting_input",
+}
+
+
+def _state_from_binding(binding: dict | None, *, exited: bool) -> str:
+    if exited:
+        return "exited"
+    if not binding:
+        return "unknown"
+    event = binding.get("lastEventType")
+    if not isinstance(event, str) or not event:
+        return "unknown"
+    return _EVENT_STATES.get(event, "running")
+
+
 def _override_log_path() -> Path:
     """Where every prompt-check override is recorded, one JSON line each."""
     configured = os.environ.get("XDG_STATE_HOME")
@@ -291,7 +319,13 @@ class SupersetBackend:
                 if not isinstance(terminal_id, str) or not terminal_id:
                     continue
                 agent = session.get("agent") if isinstance(session.get("agent"), dict) else {}
-                state = str(session.get("state") or "unknown")
+                # From the binding's last agent event, not a session "state" field —
+                # the shipped session rows carry no such field, so this was
+                # "unknown" for every Superset pane, and the operator learned that
+                # a stuck agent and a working one look identical in panes_list.
+                state = _state_from_binding(
+                    agent or None, exited=bool(session.get("exited"))
+                )
                 self._workspace_of[terminal_id] = workspace_id
                 panes.append(
                     BackendPane(
@@ -304,7 +338,7 @@ class SupersetBackend:
                         runtime=str(agent.get("agentId") or "unknown"),
                         width=0,
                         height=0,
-                        dead=state == "exited",
+                        dead=bool(session.get("exited")),
                         detail=state,
                         project=project,
                         branch=branch,

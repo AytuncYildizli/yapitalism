@@ -102,3 +102,22 @@ class SpokenTests(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class HostStateTests(unittest.TestCase):
+    def test_a_waiting_input_pane_is_blocked_without_reading_it(self) -> None:
+        """The host's own agent registry beats a screen heuristic.
+
+        Superset bindings carry the last agent event, and PermissionRequest maps
+        to waiting_input in panes_list — so the watcher can announce it without a
+        single pane_read, and a read failure cannot hide it.
+        """
+        watcher = Watcher()
+        waiting = dict(pane("superset:w1", "claude", "muhabbit"), command="waiting_input")
+
+        def refuse(_t):  # pragma: no cover - must never be called
+            raise AssertionError("waiting_input must not need a read")
+
+        findings = watcher.observe([waiting], refuse)
+        self.assertEqual([f.kind for f in findings], ["blocked"])
+        self.assertEqual(watcher.observe([waiting], refuse), [], "announced once")
