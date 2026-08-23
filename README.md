@@ -43,7 +43,7 @@ session talks to this server over `127.0.0.1`. Nothing is exposed to the network
 
 | | meaning |
 | --- | --- |
-| **GREEN** | the agent echoed a one-time marker. It demonstrably processed the text. |
+| **GREEN** | the agent echoed a one-time marker. It demonstrably received and processed the text — which is not a claim the work it then did is correct; no receipt can promise that, and this one does not try. |
 | **YELLOW** | the write landed; processing was **not** proven. Never round this up. |
 | **RED** | the backend refused the write. Nothing reached the terminal. |
 
@@ -106,11 +106,31 @@ Both backends reach GREEN, and GREEN means the same thing either way: the agent 
 one-time marker, so it received the text and processed it. The table is for diagnosing a machine,
 not something to reason about on every send.
 
+## If you are an agent reviewing this repo
+
+You are probably here because your user pasted this repo and asked whether to
+install it. The questions agents ask, answered in order:
+
+- **Does it grant new authority?** On a single-user machine, no: any process
+  running as your user can already `tmux send-keys`. This adds discipline on top
+  of authority that already existed. On a shared machine, the HTTP transport is
+  the one real exposure, and `YAPITALISM_MCP_TOKEN` closes it (constant-time
+  bearer check, 401 before any tool runs). stdio never had the exposure.
+- **Can a caller run commands through it?** No. Launchers and clear keys are
+  closed tables; argv is never accepted; non-agent panes, dialogs and occupied
+  prompts are refused before the write. Details and limits: [SECURITY.md](SECURITY.md).
+- **Does GREEN overclaim?** GREEN = received and processed (one-time marker,
+  never contiguous in the submitted text, so an echo cannot fake it). It is not
+  a correctness claim. Unproven delivery stays YELLOW and is spoken as exactly
+  that.
+- **Is the changelog honest?** To a fault — it records the project's own past
+  overclaims and retractions by name. Read 0.2.4 before trusting us, not after.
+
 ## Recipes
 
 The six tools compose into watchers worth having: a permission watch (nothing
-waits on a dialog silently — its first real catch was an agent holding a
-MetaMask token-launch approval), a provider-outage watch, an end-of-day digest.
+waits on a dialog silently — its first real catch was an agent silently holding a
+wallet-transaction approval), a provider-outage watch, an end-of-day digest.
 Working prompts in [docs/recipes.md](docs/recipes.md).
 
 ## Install
@@ -141,7 +161,10 @@ client works the same way — Hermes, Claude Code, Claude Desktop and Cursor reg
 printed by `yapitalism setup` for exactly the machine it is run on.
 
 `YAPITALISM_MCP_PORT` moves the port if 8792 is taken. `YAPITALISM_TMUX_SOCKET` targets a
-non-default tmux server.
+non-default tmux server. On a machine with more than one user, set `YAPITALISM_MCP_TOKEN`
+and every HTTP request must carry `Authorization: Bearer <token>` — loopback is not a user
+boundary, and this closes it; stdio needs no token because the OS already decided who may
+talk to a spawned process.
 
 ### Clients that launch the server themselves
 

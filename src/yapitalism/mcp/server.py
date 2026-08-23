@@ -234,6 +234,38 @@ def await_acceptance_patiently(
     return AcceptanceOutcome(False, attempts, reason, changed_recently, ended - started)
 
 
+class LoopbackTokenVerifier:
+    """Require one shared bearer token on the HTTP transport.
+
+    Loopback is not a user boundary: 127.0.0.1 is reachable by every local
+    process of every local user, and this server can type into any terminal its
+    user can see. On a single-user machine that grants nothing new — any process
+    running as you can already run `tmux send-keys` itself — but on a shared
+    machine an open loopback port would let OTHER users' processes cross into
+    yours. `YAPITALISM_MCP_TOKEN` closes exactly that hole.
+
+    Deliberately not OAuth: the client and the server are the same person on the
+    same machine, so a shared secret compared in constant time is the honest
+    amount of ceremony. Subclassing FastMCP's TokenVerifier keeps the checking
+    inside its auth middleware rather than in a bespoke ASGI layer.
+    """
+
+    def __new__(cls, token: str):  # pragma: no cover - thin composition shim
+        import hmac
+
+        from fastmcp.server.auth import AccessToken, TokenVerifier
+
+        class _Verifier(TokenVerifier):
+            async def verify_token(self, presented: str) -> AccessToken | None:
+                if hmac.compare_digest(presented, token):
+                    return AccessToken(
+                        token=presented, client_id="yapitalism-local", scopes=[]
+                    )
+                return None
+
+        return _Verifier()
+
+
 def main(argv: list[str] | None = None) -> None:
     """Run the server over stdio or loopback HTTP.
 
@@ -264,6 +296,12 @@ def main(argv: list[str] | None = None) -> None:
     if host not in {"127.0.0.1", "::1", "localhost"}:
         # Loopback only. This process can read every terminal on the machine.
         raise SystemExit(f"refusing to bind a non-loopback host: {host}")
+    token = os.environ.get("YAPITALISM_MCP_TOKEN", "")
+    if token:
+        # Set on a shared machine, every HTTP request must carry
+        # `Authorization: Bearer <token>`. stdio needs none of this: the client
+        # spawns the process, so the OS already decided who may talk to it.
+        mcp.auth = LoopbackTokenVerifier(token)
     mcp.run(transport="http", host=host, port=port)
 
 
