@@ -6,6 +6,52 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-23
+
+The breaking release, both halves promised in public: the strictest agent
+reviewer's last objection closed, and the council's oldest unexecuted
+recommendation executed.
+
+### Changed — BREAKING
+
+- **The HTTP transport requires a bearer token by default.** Minted on first
+  start, stored 0600 under `$XDG_STATE_HOME/yapitalism/http-token`, compared in
+  constant time, 401 before any tool runs. Restarts do not rotate it — a
+  per-boot token would 401 every registered client after every restart, an
+  outage shaped like a security feature. The server prints the token's PATH,
+  never its value (launchd keeps stderr). `yapitalism setup` prints per-client
+  registration lines that carry the token: Codex via `--bearer-token-env-var`,
+  Claude Code via `--header`, Hermes via a headers block — all three verified to
+  support bearer auth before this shipped. `YAPITALISM_MCP_TOKEN` overrides;
+  `YAPITALISM_MCP_INSECURE=1` opts out loudly; stdio is untouched.
+
+  **Upgrading an HTTP registration:** start the new server once, run
+  `yapitalism setup`, and re-register your client with the printed line.
+
+- **The hash-chained CLI ledger is gone.** `ledger.py`, `claims.py`, and the
+  `doctor <fixture>` / `receipt show` / `ledger verify|manifest|migrate` /
+  `superset send` commands were consumed by nothing but each other — the MCP
+  path never imported them, and a verification chain nothing reads is
+  decorative. `model.py` stays: the adapter's evidence objects are its API.
+  ADR-0004 carries the superseded note.
+
+### Added
+
+- **`yapitalism doctor` is a live diagnosis**: the running server found and
+  version-matched against the installed code, the token present, each backend
+  answering with pane counts, and the who-enforces-what table read from live
+  capabilities — moved here from the launch pitch, where it was a diagnostic
+  cosplaying as a feature. Its first run caught this machine's own service
+  serving 0.2.6 under an installed 0.2.9.
+
+### Fixed
+
+- A launcher that dies the instant its session is created reports
+  `created, process_exited_immediately` instead of a raced BackendError from
+  inside the settle loop.
+
+326 tests — down from 361, because the removed surface took its suites with it.
+
 ## [0.2.9] - 2026-08-23
 
 The product-loop release: install, see a proven GREEN, wire your phone to the
