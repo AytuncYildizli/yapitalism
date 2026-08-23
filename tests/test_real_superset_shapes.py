@@ -625,3 +625,35 @@ class ConcurrentSendsAreSerialisedTests(unittest.TestCase):
             self.assertIs(
                 backend._terminal_lock("superset:a"), backend._terminal_lock("superset:a")
             )
+
+
+class BindingStateTests(unittest.TestCase):
+    """lastEventType -> a state a caller can act on, from the host's own enum.
+
+    The event names come out of the shipped bundle (28 of them, read 2026-08-23);
+    the rule for anything unlisted is "running", never "ready" — an unknown event
+    means the agent did something recently, and optimism here is how a stuck pane
+    and a working one end up identical in panes_list, which is the state this
+    replaces.
+    """
+
+    def state(self, event: str | None, *, exited: bool = False) -> str:
+        from yapitalism.mcp.backends.superset_backend import _state_from_binding
+
+        binding = {"lastEventType": event} if event is not None else None
+        return _state_from_binding(binding, exited=exited)
+
+    def test_a_finished_turn_is_idle(self) -> None:
+        self.assertEqual(self.state("Stop"), "idle")
+
+    def test_a_permission_request_is_waiting_input(self) -> None:
+        self.assertEqual(self.state("PermissionRequest"), "waiting_input")
+        self.assertEqual(self.state("Elicitation"), "waiting_input")
+
+    def test_an_unknown_event_is_running_never_ready(self) -> None:
+        self.assertEqual(self.state("PostToolBatch"), "running")
+        self.assertEqual(self.state("SomeFutureEvent"), "running")
+
+    def test_no_binding_is_unknown_and_exited_wins(self) -> None:
+        self.assertEqual(self.state(None), "unknown")
+        self.assertEqual(self.state("Stop", exited=True), "exited")

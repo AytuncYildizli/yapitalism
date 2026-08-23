@@ -130,6 +130,19 @@ class Watcher:
             if runtime not in AGENT_RUNTIMES:
                 continue
 
+            # The host's own word beats a screen heuristic: a Superset binding
+            # whose last event is PermissionRequest/Elicitation is announced
+            # without reading a single line.
+            if str(pane.get("command")) == "waiting_input":
+                state = "blocked"
+                previous = self._states.get(target, "ok")
+                self._states[target] = state
+                if state != previous:
+                    findings.append(
+                        Finding(target, runtime, place, "blocked", "waiting_input")
+                    )
+                continue
+
             try:
                 text = read_pane(target)
             except BackendError:
