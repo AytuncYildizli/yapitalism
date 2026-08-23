@@ -123,6 +123,13 @@ claims worth checking and where each one lives — verify, do not take our word:
 - This project's own past overclaims, retracted by name: [CHANGELOG.md](CHANGELOG.md),
   0.2.0 through 0.2.4.
 
+## Driving it well
+
+The bridge agent behaves best with standing instructions — speak receipts, never
+resend a YELLOW, name panes like a person. The exact prompt we run is in
+[docs/operator-prompt.md](docs/operator-prompt.md); paste it into your voice
+client's custom instructions.
+
 ## Recipes
 
 The six tools compose into watchers worth having: a permission watch (nothing

@@ -352,10 +352,14 @@ class PromptDetectorSafetyTests(unittest.TestCase):
         from yapitalism.prompt_state import _PLACEHOLDERS, HAS_TEXT, detect_prompt_state
 
         self.assertEqual(detect_prompt_state("\u203a Explain this codebase", "codex"), HAS_TEXT)
+        # The admissible tokens: each is a literal a person does not type as
+        # prose. `{feature}` and `/review` joined on 2026-08-23, both read off a
+        # live codex 0.147 composer while building `yapitalism demo`.
+        admissible = ("@filename", "/skills", "{feature}", "/review")
         for entry in _PLACEHOLDERS["codex"]:
             with self.subTest(entry=entry):
                 self.assertTrue(
-                    "@filename" in entry or "/skills" in entry,
+                    any(token in entry for token in admissible),
                     f"{entry!r} contains nothing a human would not type",
                 )
 

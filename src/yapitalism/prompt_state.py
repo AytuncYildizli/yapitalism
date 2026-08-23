@@ -57,6 +57,11 @@ _PLACEHOLDERS: dict[str, tuple[str, ...]] = {
         "improve documentation in @filename",
         "find and fix a bug in @filename",
         "write tests for @filename",
+        # Observed 2026-08-23 on codex 0.147 right after first start: the empty
+        # composer renders rotating hints. `{feature}` and `/review` are literal
+        # on-screen tokens no human types as prose, which is what admits them.
+        "implement {feature}",
+        "run /review on my current changes",
     ),
     # Empty because nothing has been OBSERVED, not because Claude draws none. Its
     # empty composer really is blank after the marker, which is the common case and

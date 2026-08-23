@@ -77,6 +77,13 @@ _BLOCKING_PROMPTS: tuple[tuple[str, str], ...] = (
 _BLOCK_SETTLE_SECONDS = 3.0
 
 
+#: Between pasting the text and pressing Enter, and between Enter and reading
+#: the screen back. Measured, not tuned: a booting codex dropped a back-to-back
+#: Enter entirely.
+_SUBMIT_SETTLE_SECONDS = 0.4
+_SUBMIT_VERIFY_SECONDS = 0.8
+
+
 #: How far back a dialog may be recognised. A dialog occupies the screen NOW; text
 #: further back is history.
 _DIALOG_TAIL_LINES = 40
@@ -475,11 +482,42 @@ class TmuxBackend:
                 self._landed_tokens.add(client_token)
                 self._ambiguous_tokens.add(client_token)
                 send_literal(target_id, text)
+                # A beat between paste and Enter, then VERIFY the composer let go
+                # of the text. Back-to-back send-keys measured a real loss on
+                # 2026-08-23: a booting codex ingested the paste, dropped the
+                # Enter, and the message sat staged at "0 in · 0 out" while this
+                # returned "injected" - the same staged-not-submitted failure the
+                # Superset path was taught about in 0.2.x, rediscovered on tmux by
+                # the demo command. A delayed Enter submitted it, so one retry is
+                # made with a longer settle; after that the truth is "staged".
+                time.sleep(_SUBMIT_SETTLE_SECONDS)
                 send_enter(target_id)
                 self._ambiguous_tokens.discard(client_token)
-                after = capture_pane(target_id, 1000)
+                submitted = False
+                for attempt in range(2):
+                    time.sleep(_SUBMIT_VERIFY_SECONDS * (attempt + 1))
+                    after = capture_pane(target_id, 1000)
+                    if detect_prompt_state(after, runtime) != HAS_TEXT:
+                        # EMPTY is a proven submit. UNKNOWN means the screen is
+                        # busy redrawing - the agent taking the message looks
+                        # exactly like that - so only a composer STILL holding
+                        # text counts as not submitted.
+                        submitted = True
+                        break
+                    send_enter(target_id)
+                if not submitted:
+                    after = capture_pane(target_id, 1000)
             except TmuxError as error:
                 raise BackendError(str(error)) from None
+            if not submitted:
+                return SendOutcome(
+                    phase="staged_not_submitted",
+                    dispatched=False,
+                    runtime=runtime,
+                    revision_before=revision_before,
+                    revision_after=self._revisions.observe(target_id, after),
+                    reason="text remains in the composer after two Enters",
+                )
             return SendOutcome(
                 phase="injected",
                 dispatched=True,
