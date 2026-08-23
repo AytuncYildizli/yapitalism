@@ -235,6 +235,40 @@ def await_acceptance_patiently(
     return AcceptanceOutcome(False, attempts, reason, changed_recently, ended - started)
 
 
+def _http_token_path() -> "os.PathLike[str]":
+    from pathlib import Path
+
+    configured = os.environ.get("XDG_STATE_HOME")
+    root = Path(configured) if configured else Path.home() / ".local" / "state"
+    return root / "yapitalism" / "http-token"
+
+
+def load_or_create_http_token() -> str:
+    """The HTTP transport's shared secret: read it, or mint it once.
+
+    Generated on first HTTP start and persisted 0600, so every later start — and
+    `yapitalism setup`, which prints the registration lines that carry it — sees
+    the same value. Regenerating per boot would silently 401 every registered
+    client after each restart, which is a outage shaped like a security feature.
+    """
+    import secrets
+    from pathlib import Path
+
+    path = Path(_http_token_path())
+    try:
+        existing = path.read_text().strip()
+        if existing:
+            return existing
+    except OSError:
+        pass
+    token = secrets.token_urlsafe(32)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w") as handle:
+        handle.write(token + "\n")
+    return token
+
+
 class LoopbackTokenVerifier:
     """Require one shared bearer token on the HTTP transport.
 
@@ -297,20 +331,29 @@ def main(argv: list[str] | None = None) -> None:
     if host not in {"127.0.0.1", "::1", "localhost"}:
         # Loopback only. This process can read every terminal on the machine.
         raise SystemExit(f"refusing to bind a non-loopback host: {host}")
-    token = os.environ.get("YAPITALISM_MCP_TOKEN", "")
-    if not token:
-        # stderr, not stdout, and once: a nudge, not nagging. Loopback crosses
-        # user boundaries, so on a shared machine this open port is the one real
-        # exposure - SECURITY.md carries the argument.
+    # Fail closed by default. Loopback is not a user boundary — 127.0.0.1 is
+    # reachable by every local user's processes — and "auth exists but is off
+    # unless you know the env var" was the last standing objection of the
+    # strictest agent reviewer. The token is minted once and persisted, so
+    # restarts do not rotate it; `yapitalism setup` prints the registration
+    # lines that carry it. stdio needs none of this: the client spawns the
+    # process, so the OS already decided who may talk to it.
+    if os.environ.get("YAPITALISM_MCP_INSECURE") == "1":
         print(
-            "yapitalism-mcp: HTTP transport is open to all local users; set "
-            "YAPITALISM_MCP_TOKEN on a shared machine (see SECURITY.md)",
+            "yapitalism-mcp: YAPITALISM_MCP_INSECURE=1 — HTTP transport is open "
+            "to all local users (see SECURITY.md)",
             file=sys.stderr,
         )
-    if token:
-        # Set on a shared machine, every HTTP request must carry
-        # `Authorization: Bearer <token>`. stdio needs none of this: the client
-        # spawns the process, so the OS already decided who may talk to it.
+    else:
+        token = os.environ.get("YAPITALISM_MCP_TOKEN", "") or load_or_create_http_token()
+        # The PATH is printed, never the token: launchd captures stderr to a
+        # log file, and a secret in a log outlives every rotation policy.
+        print(
+            f"yapitalism-mcp: HTTP requests require a bearer token "
+            f"(stored at {_http_token_path()}; `yapitalism setup` prints the "
+            "client registration lines)",
+            file=sys.stderr,
+        )
         mcp.auth = LoopbackTokenVerifier(token)
     mcp.run(transport="http", host=host, port=port)
 

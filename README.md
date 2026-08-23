@@ -167,10 +167,11 @@ client works the same way — Hermes, Claude Code, Claude Desktop and Cursor reg
 printed by `yapitalism setup` for exactly the machine it is run on.
 
 `YAPITALISM_MCP_PORT` moves the port if 8792 is taken. `YAPITALISM_TMUX_SOCKET` targets a
-non-default tmux server. On a machine with more than one user, set `YAPITALISM_MCP_TOKEN`
-and every HTTP request must carry `Authorization: Bearer <token>` — loopback is not a user
-boundary, and this closes it; stdio needs no token because the OS already decided who may
-talk to a spawned process.
+non-default tmux server. The HTTP transport requires a bearer token by default — loopback
+is not a user boundary, so the server mints one on first start and `yapitalism setup`
+prints the registration lines that carry it. `YAPITALISM_MCP_TOKEN` overrides it;
+`YAPITALISM_MCP_INSECURE=1` opts out. stdio needs no token: the OS already decided who
+may talk to a spawned process.
 
 ### Clients that launch the server themselves
 
