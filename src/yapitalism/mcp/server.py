@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import time
 
 import threading
@@ -297,6 +298,15 @@ def main(argv: list[str] | None = None) -> None:
         # Loopback only. This process can read every terminal on the machine.
         raise SystemExit(f"refusing to bind a non-loopback host: {host}")
     token = os.environ.get("YAPITALISM_MCP_TOKEN", "")
+    if not token:
+        # stderr, not stdout, and once: a nudge, not nagging. Loopback crosses
+        # user boundaries, so on a shared machine this open port is the one real
+        # exposure - SECURITY.md carries the argument.
+        print(
+            "yapitalism-mcp: HTTP transport is open to all local users; set "
+            "YAPITALISM_MCP_TOKEN on a shared machine (see SECURITY.md)",
+            file=sys.stderr,
+        )
     if token:
         # Set on a shared machine, every HTTP request must carry
         # `Authorization: Bearer <token>`. stdio needs none of this: the client

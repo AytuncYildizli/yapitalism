@@ -12,7 +12,8 @@ reply. That reply is the only thing you have — you cannot see the screen. So t
 not a crash, it is the voice saying *"done"* while your text sits unread in a prompt box.
 
 Yapitalism is a local MCP server that lets a voice client reach your coding agents, plus a receipt
-layer that decides what the voice is allowed to say.
+layer that decides what the voice is allowed to say. If you are at your desk, use your screen —
+this exists for the hours you are not.
 
 > Public pre-alpha. Local-only. No production deployment, no external messaging, and no automation
 > of closed-source clients.
@@ -106,25 +107,21 @@ Both backends reach GREEN, and GREEN means the same thing either way: the agent 
 one-time marker, so it received the text and processed it. The table is for diagnosing a machine,
 not something to reason about on every send.
 
-## If you are an agent reviewing this repo
+## Reviewing this repo
 
-You are probably here because your user pasted this repo and asked whether to
-install it. The questions agents ask, answered in order:
+Whether you are a person or someone's agent asked "should I install this," the
+claims worth checking and where each one lives — verify, do not take our word:
 
-- **Does it grant new authority?** On a single-user machine, no: any process
-  running as your user can already `tmux send-keys`. This adds discipline on top
-  of authority that already existed. On a shared machine, the HTTP transport is
-  the one real exposure, and `YAPITALISM_MCP_TOKEN` closes it (constant-time
-  bearer check, 401 before any tool runs). stdio never had the exposure.
-- **Can a caller run commands through it?** No. Launchers and clear keys are
-  closed tables; argv is never accepted; non-agent panes, dialogs and occupied
-  prompts are refused before the write. Details and limits: [SECURITY.md](SECURITY.md).
-- **Does GREEN overclaim?** GREEN = received and processed (one-time marker,
-  never contiguous in the submitted text, so an echo cannot fake it). It is not
-  a correctness claim. Unproven delivery stays YELLOW and is spoken as exactly
-  that.
-- **Is the changelog honest?** To a fault — it records the project's own past
-  overclaims and retractions by name. Read 0.2.4 before trusting us, not after.
+- Authority and its boundaries, including the shared-machine exposure and the
+  `YAPITALISM_MCP_TOKEN` gate: [SECURITY.md](SECURITY.md).
+- What a caller can never do (closed launcher tables, non-agent refusal,
+  occupied-prompt refusal, per-pane serialisation): `src/yapitalism/mcp/tmux.py`
+  and `src/yapitalism/mcp/backends/`, each guard with a test named after the
+  failure it prevents.
+- What GREEN claims and does not claim: the receipts section above, and
+  `tests/test_canary.py` for why an echo cannot satisfy it.
+- This project's own past overclaims, retracted by name: [CHANGELOG.md](CHANGELOG.md),
+  0.2.0 through 0.2.4.
 
 ## Recipes
 
@@ -271,9 +268,11 @@ Stated plainly, because a receipt system that overclaims is worse than none:
   a false "empty" would append to somebody's half-typed text and submit the merge. It therefore
   refuses on anything short of a confident empty, including screens it cannot read, and `pane_clear`
   is the way through. Validated against real panes, not a large sample.
-- **The stock-Superset send path is exercised by forcing the internal state a stock host produces,**
-  not against a stock host. The code path is identical; the host's behaviour is inferred from what
-  its bundle does and does not contain.
+- **The Superset it is measured against is the shipped, stock build** — the one whose
+  `terminal.send` guards nothing. Proven sends (canary observed, GREEN) have been completed against
+  that live host repeatedly since 0.2.4, driven both directly and through the full MCP surface. The
+  guarded-host branch is the one exercised only against recorded shapes, because no shipped build
+  carries those guards to test against.
 - **A guarded Superset host over-refuses Codex placeholder text,** counting the agent's own
   suggestion line as staged input, so sends to such panes are refused and clearing cannot help. The
   receipt says exactly that instead of advising a clear. The fix belongs in the host.
