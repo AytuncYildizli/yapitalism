@@ -216,6 +216,85 @@ def superset_status(manifest: Path, max_lines: int | None) -> int:
     return 0
 
 
+def peers_command(args: argparse.Namespace) -> int:
+    """Manage the fleet file: which machines this one may address.
+
+    `add` verifies before writing: it initialises an MCP session against the
+    peer and lists its tools, so a typoed URL or a stale token is refused at
+    registration instead of surfacing later as a broken pane list. The token is
+    read from a file or prompted for, never taken as a flag — argv is visible to
+    every local process for its lifetime.
+    """
+    from .peers import PeerConfigError, load_peers, peers_path
+
+    path = peers_path()
+    if args.peers_command == "list":
+        try:
+            loaded = load_peers()
+        except PeerConfigError as error:
+            print(f"peers file is unusable: {error}")
+            return 1
+        if not loaded:
+            print(f"no peers configured ({path})")
+            return 0
+        for peer in loaded:
+            print(f"  {peer.name:<16} {peer.url}")
+        return 0
+
+    if args.peers_command == "remove":
+        payload = json.loads(path.read_text()) if path.exists() else {"peers": {}}
+        if args.name not in payload.get("peers", {}):
+            print(f"no peer named {args.name!r}")
+            return 1
+        del payload["peers"][args.name]
+        _write_peers(path, payload)
+        print(f"removed {args.name}")
+        return 0
+
+    # add
+    token = ""
+    if args.token_file:
+        token = Path(args.token_file).read_text().strip()
+    elif sys.stdin.isatty():
+        import getpass
+
+        token = getpass.getpass(f"bearer token for {args.name}: ").strip()
+    entry: dict[str, object] = {"url": args.url, "token": token}
+    if args.allow_public:
+        entry["allow_public"] = True
+
+    from .peers import _validate
+
+    try:
+        peer = _validate(args.name, entry)
+    except PeerConfigError as error:
+        print(f"refused: {error}")
+        return 1
+
+    from .mcp.backends.base import BackendError
+    from .mcp.backends.remote_backend import RemotePeer
+
+    try:
+        listed = RemotePeer(peer, timeout=10.0).call_tool("panes_list", {})
+    except BackendError as error:
+        print(f"refused: the peer did not answer as a yapitalism server ({error})")
+        return 1
+    payload = json.loads(path.read_text()) if path.exists() else {"peers": {}}
+    payload.setdefault("peers", {})[args.name] = entry
+    _write_peers(path, payload)
+    count = len(listed.get("panes", []))
+    print(f"added {args.name} — answered with {count} pane(s). Restart yapitalism-mcp to serve it.")
+    return 0
+
+
+def _write_peers(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w") as handle:
+        json.dump(payload, handle, indent=2)
+        handle.write("\n")
+
+
 def doctor_live() -> int:
     """Is the thing actually working, right now?
 
@@ -292,6 +371,27 @@ def doctor_live() -> int:
         except BackendError as error:
             lines.append(f"  {backend.namespace:<9} NO   {error}")
 
+    from .peers import PeerConfigError, load_peers
+
+    try:
+        fleet = load_peers()
+    except PeerConfigError as error:
+        fleet = []
+        lines += ["", "Peers", "", f"  peers file is unusable: {error}"]
+    if fleet:
+        lines += ["", "Peers"]
+        from .mcp.backends.base import BackendError as _BackendError
+        from .mcp.backends.remote_backend import RemotePeer
+
+        lines.append("")
+        for peer in fleet:
+            try:
+                listed = RemotePeer(peer, timeout=8.0).call_tool("panes_list", {})
+                count = len(listed.get("panes", []))
+                lines.append(f"  {peer.name:<12} yes  {peer.url} — {count} pane(s)")
+            except _BackendError as error:
+                lines.append(f"  {peer.name:<12} NO   {error}")
+
     lines += ["", "Who enforces what (host = atomic refusal, client = check-then-write, none = nothing)", ""]
     for backend in (TmuxBackend(), SupersetBackend()):
         try:
@@ -312,6 +412,21 @@ def doctor_live() -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="yapitalism")
     subcommands = parser.add_subparsers(dest="command", required=True)
+    peers_parser = subcommands.add_parser(
+        "peers", help="machines this one may address (add / list / remove)"
+    )
+    peers_commands = peers_parser.add_subparsers(dest="peers_command", required=True)
+    peers_add = peers_commands.add_parser("add", help="verify a peer answers, then record it")
+    peers_add.add_argument("name", help="namespace its panes will carry, e.g. studio")
+    peers_add.add_argument("url", help="the peer's MCP endpoint, e.g. http://100.x.y.z:8792/mcp")
+    peers_add.add_argument("--token-file", help="file holding the peer's bearer token")
+    peers_add.add_argument(
+        "--allow-public", action="store_true",
+        help="permit a public address (terminals over the open internet - be sure)",
+    )
+    peers_commands.add_parser("list", help="show configured peers")
+    peers_remove = peers_commands.add_parser("remove", help="forget a peer")
+    peers_remove.add_argument("name")
     subcommands.add_parser(
         "doctor",
         help="is it healthy right now: server, token, backends, and who enforces what",
@@ -393,6 +508,8 @@ def main(argv: list[str] | None = None) -> int:
         return mcp_main(list(raw))
 
     args = build_parser().parse_args(argv)
+    if args.command == "peers":
+        return peers_command(args)
     if args.command == "doctor":
         return doctor_live()
     if args.command == "demo":

@@ -123,6 +123,28 @@ claims worth checking and where each one lives — verify, do not take our word:
 - This project's own past overclaims, retracted by name: [CHANGELOG.md](CHANGELOG.md),
   0.2.0 through 0.2.4.
 
+## Machines are panes too
+
+A peer is another machine's yapitalism server, mounted under its own namespace:
+the codex pane `tmux:%0` on the machine `studio` is `studio:tmux:%0` here, in the
+same `panes_list`, addressable by the same `pane_send`. Receipts pass through
+verbatim — the peer proved them next to its own terminals, and this side only
+gives the ids their machine name back.
+
+```bash
+# on the peer (reachable over your tailnet):
+YAPITALISM_MCP_HOST=100.x.y.z yapitalism-mcp   # tailnet bind requires the bearer gate
+
+# on this machine:
+yapitalism peers add studio http://100.x.y.z:8792/mcp --token-file <peer's token>
+```
+
+`peers add` verifies the peer answers as a yapitalism server before writing
+anything. A peer on a public address is refused unless `allow_public` is said
+explicitly; the tailnet is the transport, not the trust story — the peer's
+bearer token still decides who may call. Configured peers show up in
+`yapitalism doctor` with live pane counts.
+
 ## Driving it well
 
 The bridge agent behaves best with standing instructions — speak receipts, never

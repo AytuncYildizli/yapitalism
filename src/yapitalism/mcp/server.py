@@ -61,6 +61,31 @@ mcp: FastMCP = FastMCP("yapitalism", version=__version__)
 # missing or unusable manifest surfaces as a per-backend error in panes_list
 # rather than preventing the server from starting or hiding tmux.
 registry = BackendRegistry([TmuxBackend(), SupersetBackend()])
+# Peers: other machines' yapitalism servers, from ~/.config/yapitalism/peers.json.
+# Loaded once at startup like the backends; an empty or missing file is simply a
+# machine with no fleet.
+from .registry import PeerRegistry  # noqa: E402
+
+peers = PeerRegistry()
+
+
+def _forward_to_peer(target_id: str, tool: str, arguments: dict) -> dict | None:
+    """If the id names a peer's pane, run the whole tool there.
+
+    The receipt in the response is the PEER's receipt, untouched but for the
+    target ids gaining the machine's name back. This side measured nothing and
+    claims nothing - restating a remote verdict in local words would be the
+    overclaim this project exists to refuse.
+    """
+    owner = peers.owner_of(target_id)
+    if owner is None:
+        return None
+    forwarded = dict(arguments)
+    forwarded["target_id"] = owner.strip(target_id)
+    try:
+        return owner.brand(owner.call_tool(tool, forwarded))
+    except BackendError as error:
+        return {"ok": False, "error": str(error), "target_id": target_id}
 
 
 @mcp.tool
@@ -111,6 +136,23 @@ def panes_list() -> dict[str, object]:
     Superset-managed PTYs instead.
     """
     panes, errors, unconfigured = registry.list_all()
+    for peer in peers.all():
+        # A configured peer that cannot answer is a FAILURE, not absence: the
+        # operator wrote it into the peers file, so silence about it would hide
+        # a machine they believe is watched.
+        try:
+            remote = peer.brand(peer.call_tool("panes_list", {}))
+        except BackendError as error:
+            errors.append({"backend": peer.namespace, "error": str(error)})
+            continue
+        for pane in remote.get("panes", []):
+            pane["machine"] = peer.namespace
+            panes.append(pane)
+        for entry in remote.get("errors", []):
+            errors.append(
+                {"backend": f"{peer.namespace}:{entry.get('backend', '?')}",
+                 "error": str(entry.get("error", ""))}
+            )
     payload: dict[str, object] = {
         # Absence deliberately does not count. This was `not errors` with absence
         # folded into errors, so every machine without Superset got `ok: false`
@@ -134,6 +176,9 @@ def pane_read(target_id: str, lines: int = 200) -> dict[str, object]:
     so it may hold wrapped lines, prompts and ANSI leftovers — summarize it
     rather than reading it aloud verbatim.
     """
+    remote = _forward_to_peer(target_id, "pane_read", {"lines": lines})
+    if remote is not None:
+        return remote
     try:
         backend = registry.resolve(target_id)
         text = backend.read_pane(target_id, lines)
@@ -329,8 +374,26 @@ def main(argv: list[str] | None = None) -> None:
     host = os.environ.get("YAPITALISM_MCP_HOST", DEFAULT_HOST)
     port = int(os.environ.get("YAPITALISM_MCP_PORT", DEFAULT_PORT))
     if host not in {"127.0.0.1", "::1", "localhost"}:
-        # Loopback only. This process can read every terminal on the machine.
-        raise SystemExit(f"refusing to bind a non-loopback host: {host}")
+        # Loopback by default — this process can read every terminal on the
+        # machine. One widening, for fleets: an explicitly configured address in
+        # tailscale's CGNAT range (100.64/10) may be bound, and ONLY with the
+        # bearer gate active. The tailnet encrypts and authenticates the
+        # transport; the token still decides who may call, because a tailnet can
+        # contain machines that are not people you trust with your terminals.
+        import ipaddress
+
+        insecure = os.environ.get("YAPITALISM_MCP_INSECURE") == "1"
+        try:
+            bindable = ipaddress.ip_address(host) in ipaddress.ip_network("100.64.0.0/10")
+        except ValueError:
+            bindable = False
+        if not bindable:
+            raise SystemExit(f"refusing to bind a non-loopback host: {host}")
+        if insecure:
+            raise SystemExit(
+                "refusing to bind a tailnet address with YAPITALISM_MCP_INSECURE=1: "
+                "an open port on the tailnet is every tailnet device's port"
+            )
     # Fail closed by default. Loopback is not a user boundary — 127.0.0.1 is
     # reachable by every local user's processes — and "auth exists but is off
     # unless you know the env var" was the last standing objection of the
@@ -345,13 +408,19 @@ def main(argv: list[str] | None = None) -> None:
             file=sys.stderr,
         )
     else:
-        token = os.environ.get("YAPITALISM_MCP_TOKEN", "") or load_or_create_http_token()
+        from_env = os.environ.get("YAPITALISM_MCP_TOKEN", "")
+        token = from_env or load_or_create_http_token()
         # The PATH is printed, never the token: launchd captures stderr to a
-        # log file, and a secret in a log outlives every rotation policy.
+        # log file, and a secret in a log outlives every rotation policy. And the
+        # message says where the token ACTUALLY came from — the first version
+        # named the state file while serving one from the environment, which sent
+        # a reader to a file that did not exist.
+        source = (
+            "from $YAPITALISM_MCP_TOKEN" if from_env else f"stored at {_http_token_path()}"
+        )
         print(
-            f"yapitalism-mcp: HTTP requests require a bearer token "
-            f"(stored at {_http_token_path()}; `yapitalism setup` prints the "
-            "client registration lines)",
+            f"yapitalism-mcp: HTTP requests require a bearer token ({source}; "
+            "`yapitalism setup` prints the client registration lines)",
             file=sys.stderr,
         )
         mcp.auth = LoopbackTokenVerifier(token)
@@ -429,6 +498,21 @@ def pane_send(
     Only the prompt verdict moves to this side, and the receipt reports
     `empty_prompt_check: client` for that send while the other two stay `host`.
     """
+    remote = _forward_to_peer(
+        target_id,
+        "pane_send",
+        {
+            "text": text,
+            "prove_acceptance": prove_acceptance,
+            "timeout_seconds": timeout_seconds,
+            "client_token": client_token,
+            "override_host_prompt_check": override_host_prompt_check,
+        },
+    )
+    if remote is not None:
+        # The peer minted the canary next to its own terminal and built this
+        # receipt itself; it comes back verbatim, ids re-namespaced.
+        return remote
     try:
         backend = registry.resolve(target_id)
     except BackendError as error:
@@ -710,6 +794,10 @@ def pane_clear(target_id: str, action: str = "escape") -> dict[str, object]:
     `pane_changed` there is read from the host's revision counter rather than a
     screen diff.
     """
+    remote = _forward_to_peer(target_id, "pane_clear", {"action": action})
+    if remote is not None:
+        return remote
+
     try:
         backend = registry.resolve(target_id)
     except BackendError as error:

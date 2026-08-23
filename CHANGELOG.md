@@ -6,6 +6,52 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-24
+
+Machines are panes too.
+
+### Added
+
+- **Peers**: another machine's yapitalism server, mounted under its own
+  namespace — `studio:tmux:%0` sits in the same `panes_list` as your local
+  panes and answers the same `pane_send`. The unit of forwarding is the whole
+  TOOL, deliberately: the peer runs the full receipt engine next to its own
+  terminals, and its verdicts pass through verbatim with only the target ids
+  re-namespaced. This side measured nothing and claims nothing.
+- **`yapitalism peers add|list|remove`** — `add` initialises a real MCP session
+  against the peer and lists its tools before writing a byte of config, so a
+  typoed URL or stale token is refused at registration. Tokens come from a file
+  or a prompt, never argv. The peers file is owner-only JSON with fail-closed
+  trust rules: a non-loopback peer requires a token; a public address requires
+  `allow_public` said explicitly; a peer named `tmux` or `superset` is refused
+  because `tmux:%0` must always mean the local pane; one invalid peer fails the
+  whole load, because a skipped peer is a machine the operator believes is
+  watched.
+- **Tailnet bind**: `YAPITALISM_MCP_HOST` may name an address in tailscale's
+  CGNAT range (100.64/10), and only with the bearer gate active —
+  `YAPITALISM_MCP_INSECURE=1` plus a tailnet bind is refused outright, because
+  an open port on the tailnet is every tailnet device's port.
+- `yapitalism doctor` reports each configured peer with a live pane count.
+
+### Verified
+
+End to end over the tailscale interface with bearer auth: a second server bound
+to 100.73.28.102, registered via `peers add` (which counted its 30 panes before
+writing config), then through the full MCP surface — `panes_list` merged 30
+local + 30 remote panes, and a `pane_send` to `studio2:superset:…` came back
+GREEN, "codex aldı.", the peer's own canary-proven receipt, in 8.4s.
+
+### Fixed
+
+- Python's `is_private` was the wrong predicate twice over — it calls the
+  documentation ranges private and tailscale's CGNAT space public, both
+  measured. Peer trust now uses a closed list of networks that mean "my LAN or
+  my tailnet".
+- The startup line now says where the bearer token actually came from; it named
+  the state file while serving a token from the environment.
+
+340 tests.
+
 ## [0.3.0] - 2026-08-23
 
 The breaking release, both halves promised in public: the strictest agent
