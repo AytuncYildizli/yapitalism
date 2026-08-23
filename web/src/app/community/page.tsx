@@ -24,11 +24,6 @@ export default function CommunityPage() {
 			</p>
 			<p className="caLabel">contract address, verbatim, so you can verify rather than trust a link:</p>
 			<code className="ca">{CA}</code>
-			<p className="feeNote">
-				Creator fees are reportedly reserved for the maintainer. None have
-				been claimed as of this page going up; if that changes, this line
-				changes.
-			</p>
 			<p>
 				<a href="/">← back to the product</a>
 			</p>
