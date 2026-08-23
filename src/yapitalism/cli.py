@@ -575,6 +575,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="interview this machine: what it has, what that buys, what is missing",
     )
 
+    watch_parser = subcommands.add_parser(
+        "watch",
+        help="watch agent panes and notify when one silently waits, breaks or dies",
+    )
+    watch_parser.add_argument(
+        "--interval", type=float, default=300.0,
+        help="seconds between polls (default 300)",
+    )
+    watch_parser.add_argument(
+        "--notify", default="",
+        help="URL to POST findings to, one plain-text line each "
+        "(ntfy.sh topics and generic webhooks both work); omitted, findings only print",
+    )
+    watch_parser.add_argument(
+        "--once", action="store_true",
+        help="one poll and exit, for cron; state resets per run, so each run "
+        "reports everything currently noteworthy rather than only transitions",
+    )
+
+    demo_parser = subcommands.add_parser(
+        "demo",
+        help="start a throwaway agent, send one proven message, show the receipt",
+    )
+    demo_parser.add_argument(
+        "--runtime", default="", help="which agent to start (default: first of codex/claude/kimi on PATH)"
+    )
+    demo_parser.add_argument(
+        "--keep", action="store_true", help="leave the demo session running afterwards"
+    )
+
     superset_parser = subcommands.add_parser("superset", help="operate a Superset terminal")
     superset_commands = superset_parser.add_subparsers(dest="superset_command", required=True)
     setup_parser = superset_commands.add_parser(
@@ -643,6 +673,14 @@ def main(argv: list[str] | None = None) -> int:
         return ledger_manifest(args.ledger)
     if args.command == "ledger" and args.ledger_command == "migrate":
         return ledger_migrate(args.source, args.output)
+    if args.command == "demo":
+        from .demo import run_demo
+
+        return run_demo(args.runtime, keep=args.keep)
+    if args.command == "watch":
+        from .watch import run_watch
+
+        return run_watch(interval=args.interval, notify_url=args.notify, once=args.once)
     if args.command == "setup":
         return setup_report(args)
     if args.command == "superset" and args.superset_command == "setup":

@@ -60,6 +60,10 @@ class TmuxSendGuardTests(unittest.TestCase):
         # one test's typed text is still on screen for the next, which made an
         # "unreadable screen" test find a prompt line from three tests ago.
         tmux("respawn-pane", "-k", "-t", "%0", "--", "cat")
+        # And drop the SCROLLBACK too: the fake composer's `clear` pushes old
+        # lines into history, capture_pane reads history, and one test's screen
+        # leaked into the next through a pane that looked freshly respawned.
+        tmux("clear-history", "-t", "%0")
         time.sleep(0.2)
 
     def as_codex(self) -> None:
@@ -70,6 +74,28 @@ class TmuxSendGuardTests(unittest.TestCase):
         stays incapable of executing anything.
         """
         self.backend._runtime_of = lambda target_id: "codex"  # type: ignore[method-assign]
+
+    def as_fake_composer(self) -> None:
+        """Respawn the pane as a composer that CLEARS on submit.
+
+        `cat` cannot cross the submit boundary honestly: a real TUI empties its
+        composer when Enter lands, cat merges the typed text into the echoed
+        line forever. Since the send path now VERIFIES submission (a booting
+        codex was measured dropping a back-to-back Enter, leaving the message
+        staged at "0 in · 0 out" while we reported injected), tests that cross
+        that boundary need a pane that behaves like a composer: draw the
+        placeholder, take a line, redraw the placeholder.
+        """
+        script = (
+            'printf "\u203a Use /skills to list available skills\n"; '
+            "while IFS= read -r line; do "
+            'clear; echo "$line" ; '
+            'printf "\u203a Use /skills to list available skills\n"; '
+            "done"
+        )
+        tmux("respawn-pane", "-k", "-t", "%0", "--", "sh", "-c", script)
+        time.sleep(0.3)
+        self.as_codex()
 
     def screen(self) -> str:
         return capture_pane(self.target, 50)
@@ -125,8 +151,7 @@ class TmuxSendGuardTests(unittest.TestCase):
         A test suite where every send is declined would pass while the product did
         nothing, so this pins the permitting case.
         """
-        self.as_codex()
-        send_literal(self.target, CODEX_EMPTY)
+        self.as_fake_composer()
         outcome = self.backend.send(
             self.target, "run the tests", canary=None, client_token="ok-1"
         )
@@ -135,8 +160,7 @@ class TmuxSendGuardTests(unittest.TestCase):
         self.assertIn("run the tests", self.screen())
 
     def test_a_replayed_token_is_refused_without_typing_again(self) -> None:
-        self.as_codex()
-        send_literal(self.target, CODEX_EMPTY)
+        self.as_fake_composer()
         first = self.backend.send(
             self.target, "once only", canary=None, client_token="dup-1"
         )
