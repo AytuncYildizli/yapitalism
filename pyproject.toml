@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yapitalism"
-version = "0.2.7"
+version = "0.2.8"
 description = "Evidence-backed reliability for voice-driven agent work"
 readme = "README.md"
 requires-python = ">=3.11"
