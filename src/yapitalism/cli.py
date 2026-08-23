@@ -4,168 +4,16 @@ import argparse
 import json
 import os
 import sys
-import uuid
 from pathlib import Path
-from typing import Any
 
-from .adapters.superset import SupersetAdapter, SupersetConfig, TrpcError
-from .claims import ConfirmationClaimStore
-from .ledger import JsonlLedger
+from .adapters.superset import SupersetAdapter, SupersetConfig
 from .mcp.backends.base import GUARANTEES
 from .setup import Environment
-from .model import EvidenceEvent, Leg, LegState, Provenance, Receipt, Status
-
-
-def _event_from_raw(raw: dict[str, object], *, command_id: str | None = None) -> EvidenceEvent:
-    sequence_raw = raw.get("sequence")
-    if sequence_raw is not None and (isinstance(sequence_raw, bool) or not isinstance(sequence_raw, int)):
-        raise ValueError("event sequence must be an integer")
-    return EvidenceEvent(
-        event_id=str(raw["event_id"]),
-        command_id=command_id or str(raw["command_id"]),
-        leg=Leg(raw["leg"]),
-        state=LegState(raw["state"]),
-        kind=str(raw["kind"]),
-        provenance=Provenance(raw["provenance"]),
-        occurred_at=str(raw.get("occurred_at", "fixture")),
-        reason=str(raw.get("reason", "")),
-        evidence_ref=str(raw.get("evidence_ref", "")),
-        sequence=sequence_raw,
-        supersedes=(str(raw["supersedes"]) if raw.get("supersedes") is not None else None),
-        actor_id=(str(raw["actor_id"]) if raw.get("actor_id") is not None else None),
-        source_id=(str(raw["source_id"]) if raw.get("source_id") is not None else None),
-        target_id=(str(raw["target_id"]) if raw.get("target_id") is not None else None),
-        session_id=(str(raw["session_id"]) if raw.get("session_id") is not None else None),
-        delivery_id=(str(raw["delivery_id"]) if raw.get("delivery_id") is not None else None),
-    )
-
-
-def receipt_from_fixture(payload: dict[str, Any]) -> Receipt:
-    receipt = Receipt(
-        command_id=str(payload["command_id"]),
-        handoff_required=bool(payload.get("handoff_required", False)),
-        handoff_destination=payload.get("handoff_destination"),
-    )
-    for raw in payload.get("events", []):
-        receipt.record(_event_from_raw(raw, command_id=receipt.command_id))
-    return receipt
-
-
-def doctor(path: Path) -> int:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    receipt = receipt_from_fixture(payload)
-    print(receipt.summary())
-    return 0
 
 
 def _state_root() -> Path:
     configured = os.environ.get("XDG_STATE_HOME")
     return (Path(configured) if configured else Path.home() / ".local" / "state") / "yapitalism"
-
-
-def receipt_show(ledger_path: Path, command_id: str) -> int:
-    # One locked read for both verification and projection. Verifying and then
-    # re-reading would let a writer swap the file in between, so the projected
-    # rows would not be the verified ones.
-    verification, all_rows = JsonlLedger(ledger_path).verified_rows()
-    if not verification.valid:
-        print(
-            json.dumps(
-                {"command_id": command_id, "reason": "ledger_unverified", "detail": verification.reason},
-                sort_keys=True,
-            )
-        )
-        return 2
-    rows = [row for row in all_rows if row.get("command_id") == command_id]
-    if not rows:
-        print(json.dumps({"command_id": command_id, "reason": "receipt_not_found"}, sort_keys=True))
-        return 2
-    receipt = receipt_from_fixture({"command_id": command_id, "events": rows})
-    if receipt.status is Status.GREEN:
-        # The ledger stores events only — it has no handoff fields — so this
-        # projection cannot rule out a claimed handoff with an unknown
-        # destination, which ADR-0001 says must block GREEN. Demote the verdict
-        # rather than appending a caveat: a suffix on a line that still reads
-        # GREEN is not a gate, because every consumer matching on the status
-        # word keeps seeing success.
-        print(f"{Status.YELLOW.value} command={command_id} pending=handoff_unrecorded")
-        return 0
-    print(receipt.summary())
-    return 0
-
-
-def ledger_verify(ledger_path: Path) -> int:
-    result = JsonlLedger(ledger_path).verify()
-    print(
-        json.dumps(
-            {
-                "valid": result.valid,
-                "event_count": result.event_count,
-                "chain_head": result.chain_head,
-                "reason": result.reason,
-            },
-            sort_keys=True,
-        )
-    )
-    return 0 if result.valid else 2
-
-
-def ledger_manifest(ledger_path: Path) -> int:
-    manifest = JsonlLedger(ledger_path).manifest()
-    print(
-        json.dumps(
-            {
-                "authority": manifest.authority,
-                "valid": manifest.valid,
-                "schema_version": manifest.schema_version,
-                "projection_version": manifest.projection_version,
-                "event_count": manifest.event_count,
-                "command_count": manifest.command_count,
-                "first_sequence": manifest.first_sequence,
-                "last_sequence": manifest.last_sequence,
-                "chain_head": manifest.chain_head,
-                "verification_reason": manifest.verification_reason,
-            },
-            sort_keys=True,
-        )
-    )
-    return 0 if manifest.valid else 2
-
-
-def ledger_migrate(source_path: Path, output_path: Path) -> int:
-    if source_path.resolve() == output_path.resolve() or output_path.exists():
-        print(json.dumps({"migrated": False, "reason": "migration_output_must_be_new"}, sort_keys=True))
-        return 2
-    try:
-        source_rows = JsonlLedger(source_path).read()
-        if any(
-            row.get("schema_version") is not None
-            or row.get("sequence") is not None
-            or row.get("event_hash") is not None
-            for row in source_rows
-        ):
-            raise ValueError("source is not a legacy ledger")
-        output = JsonlLedger(output_path)
-        for row in source_rows:
-            output.append(_event_from_raw(row))
-        verification = output.verify()
-        if not verification.valid:
-            raise ValueError("migrated ledger failed verification")
-    except (KeyError, OSError, ValueError):
-        print(json.dumps({"migrated": False, "reason": "ledger_migration_failed"}, sort_keys=True))
-        return 2
-    print(
-        json.dumps(
-            {
-                "migrated": True,
-                "migrated_events": verification.event_count,
-                "chain_head": verification.chain_head,
-                "source_unchanged": True,
-            },
-            sort_keys=True,
-        )
-    )
-    return 0
 
 
 _STDIO_FORM = '{"mcpServers": {"yapitalism": {"command": "yapitalism-mcp", "args": ["--stdio"]}}}'
@@ -368,226 +216,106 @@ def superset_status(manifest: Path, max_lines: int | None) -> int:
     return 0
 
 
-def superset_send(args: argparse.Namespace) -> int:
-    command_id = args.client_token or str(uuid.uuid4())
-    if args.confirm_send and args.client_token is None:
-        print(
-            json.dumps(
-                {
-                    "dispatched": False,
-                    "reason": "client_token_required_for_confirmed_send",
-                },
-                sort_keys=True,
-            )
-        )
-        return 2
-    ledger = JsonlLedger(args.ledger)
-    try:
-        ledger.require_appendable()
-    except (OSError, ValueError):
-        print(
-            json.dumps(
-                {"command_id": command_id, "dispatched": False, "reason": "ledger_migration_required"},
-                sort_keys=True,
-            )
-        )
-        return 2
-    adapter = SupersetAdapter(SupersetConfig.from_manifest(args.manifest))
-    claims = ConfirmationClaimStore(args.claim_dir)
-    if not args.confirm_send:
-        dispatched = adapter.dispatch(
-            args.text,
-            expected_revision=args.expect_revision,
-            client_token=command_id,
-            confirm=False,
-        )
-        # Evidence FIRST, authorization second. Reversed, a crash or a failed append
-        # between the two left a live claim that could authorize a confirmed mutation
-        # while the dry run it rests on was never durably recorded - authorization
-        # outliving its own evidence, in the component whose whole job is that the
-        # evidence is authoritative. This is write-ahead logging, and the codebase
-        # already applies the discipline to its one-shot POST.
-        try:
-            ledger.append(dispatched.to_evidence(command_id))
-        except (ValueError, PermissionError, OSError):
-            print(
-                json.dumps(
-                    {"command_id": command_id, "dispatched": False, "reason": "dry_run_evidence_unrecorded"},
-                    sort_keys=True,
-                )
-            )
-            return 2
-        try:
-            claims.issue(
-                client_token=command_id,
-                command_id=command_id,
-                text=args.text,
-                expected_revision=args.expect_revision,
-                terminal_id=adapter.config.terminal_id,
-            )
-        except (ValueError, PermissionError, OSError):
-            print(
-                json.dumps(
-                    {"command_id": command_id, "dispatched": False, "reason": "confirmation_claim_rejected"},
-                    sort_keys=True,
-                )
-            )
-            return 2
-        print(
-            json.dumps(
-                {
-                    "command_id": command_id,
-                    "confirmation_required": True,
-                    "dry_run": dispatched.dry_run,
-                    "expected_revision": args.expect_revision,
-                    "target_terminal_id": adapter.config.terminal_id,
-                },
-                sort_keys=True,
-            )
-        )
-        return 0
+def doctor_live() -> int:
+    """Is the thing actually working, right now?
 
-    # Keep the baseline and polling windows identical so a pre-existing marker
-    # cannot enter the wider polling view after unrelated revision movement.
-    baseline = adapter.snapshot(max_lines=1000)
-    if baseline.revision != args.expect_revision:
-        print(
-            json.dumps(
-                {
-                    "command_id": command_id,
-                    "dispatched": False,
-                    "reason": "baseline_revision_mismatch",
-                    "baseline_revision": baseline.revision,
-                },
-                sort_keys=True,
-            )
-        )
-        return 2
-    adapter.validate_canary(
-        args.canary,
-        baseline_text=baseline.text,
-        submitted_text=args.text,
-    )
+    `setup` answers "what does this machine have"; this answers "is it healthy" —
+    the running server found and version-matched, the token present, each backend
+    answering, and the guarantee table read from live capabilities. The table
+    lives HERE rather than in the launch pitch: who enforced which guarantee is a
+    diagnostic for the person debugging, not a thing to reason about per send.
+    """
+    import urllib.request
+
+    from . import __version__
+    from .mcp.server import DEFAULT_HOST, DEFAULT_PORT, _http_token_path
+
+    lines: list[str] = ["", "Service", ""]
+    port = int(os.environ.get("YAPITALISM_MCP_PORT", DEFAULT_PORT))
+    url = f"http://{DEFAULT_HOST}:{port}/mcp"
+    token = ""
     try:
-        command_id = claims.consume(
-            client_token=command_id,
-            text=args.text,
-            expected_revision=baseline.revision,
-            terminal_id=adapter.config.terminal_id,
-        )
-    except (ValueError, PermissionError, OSError):
-        print(
-            json.dumps(
-                {"command_id": command_id, "dispatched": False, "reason": "confirmation_claim_rejected"},
-                sort_keys=True,
-            )
-        )
-        return 2
-    if command_id != args.client_token:
-        # The claim's command_id and the client token are the same value today,
-        # but nothing enforces it. If they ever diverge, one of them keys the
-        # POST and the other labels the receipt, so a send could be dispatched
-        # under an idempotency key that no receipt refers to. Refuse instead of
-        # silently choosing.
-        print(
-            json.dumps(
-                {"command_id": command_id, "dispatched": False, "reason": "claim_identity_mismatch"},
-                sort_keys=True,
-            )
-        )
-        return 2
+        token = Path(_http_token_path()).read_text().strip()
+    except OSError:
+        pass
+    body = json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                   "clientInfo": {"name": "doctor", "version": "0"}},
+    }).encode()
+    headers = {"Content-Type": "application/json",
+               "Accept": "application/json, text/event-stream"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     try:
-        dispatched = adapter.dispatch(
-            args.text,
-            expected_revision=baseline.revision,
-            # The client token, not the claim's command_id. Superset keyed the
-            # dry-run on this exact token, so the confirmed send must reuse it
-            # or the idempotency key changes and one logical confirmation can
-            # become two POSTs. The equality assertion above makes the
-            # relationship explicit instead of silently preferring either one.
-            client_token=args.client_token,
-            confirm=True,
-        )
-    except TrpcError:
-        ledger.append(
-            EvidenceEvent(
-                event_id=str(uuid.uuid4()),
-                command_id=command_id,
-                leg=Leg.DISPATCH,
-                state=LegState.FAILED,
-                kind="terminal.send.ambiguous",
-                provenance=Provenance.API,
-                reason="transport_ambiguous",
-                evidence_ref=f"terminal:{adapter.config.terminal_id}",
+        with urllib.request.urlopen(
+            urllib.request.Request(url, data=body, headers=headers, method="POST"),
+            timeout=5,
+        ) as response:
+            raw = response.read(65536).decode(errors="replace")
+        served = ""
+        marker = '"version":"'
+        if '"serverInfo"' in raw:
+            tail = raw.split('"serverInfo"', 1)[1]
+            if marker in tail:
+                served = tail.split(marker, 1)[1].split('"', 1)[0]
+        if served == __version__:
+            lines.append(f"  server     yes  {url} serving {served}")
+        elif served:
+            lines.append(
+                f"  server     OLD  {url} serves {served}, installed is "
+                f"{__version__} — restart the service to pick up the new code"
             )
-        )
-        print(
-            json.dumps(
-                {"command_id": command_id, "dispatched": False, "reason": "transport_ambiguous"},
-                sort_keys=True,
-            )
-        )
-        return 2
-    ledger.append(dispatched.to_evidence(command_id))
-    if not dispatched.dispatched:
-        print(
-            json.dumps(
-                {
-                    "command_id": command_id,
-                    "dispatched": False,
-                    "phase": dispatched.phase,
-                },
-                sort_keys=True,
-            )
-        )
-        return 2
-    canary = adapter.await_canary(
-        args.canary,
-        command_id=command_id,
-        baseline_revision=baseline.revision,
-        baseline_text=baseline.text,
-        submitted_text=args.text,
-        timeout=args.canary_timeout,
-        poll_interval=args.poll_interval,
+        else:
+            lines.append(f"  server     ???  {url} answered but named no version")
+    except OSError as error:
+        lines.append(f"  server     no   {url} did not answer ({error})")
+    lines.append(
+        f"  token      {'yes' if token else 'no '}  {_http_token_path()}"
+        + ("" if token else "  (minted on the server's first HTTP start)")
     )
-    ledger.append(canary.evidence)
-    print(
-        json.dumps(
-            {
-                "command_id": command_id,
-                "dispatched": True,
-                "accepted": canary.observed,
-                "attempts": canary.attempts,
-                "last_revision": canary.last_revision,
-            },
-            sort_keys=True,
-        )
-    )
-    return 0 if canary.observed else 2
+
+    lines += ["", "Backends, live", ""]
+    from .mcp.backends.superset_backend import SupersetBackend
+    from .mcp.backends.tmux_backend import TmuxBackend
+    from .mcp.backends.base import BackendError, BackendUnavailable
+
+    for backend in (TmuxBackend(), SupersetBackend()):
+        try:
+            panes = backend.list_panes()
+            agents = sum(1 for pane in panes if pane.runtime in ("codex", "claude", "kimi", "opencode"))
+            lines.append(
+                f"  {backend.namespace:<9} yes  {len(panes)} pane(s), {agents} running an agent"
+            )
+        except BackendUnavailable as absent:
+            lines.append(f"  {backend.namespace:<9} --   {absent}")
+        except BackendError as error:
+            lines.append(f"  {backend.namespace:<9} NO   {error}")
+
+    lines += ["", "Who enforces what (host = atomic refusal, client = check-then-write, none = nothing)", ""]
+    for backend in (TmuxBackend(), SupersetBackend()):
+        try:
+            caps = backend.capabilities()
+            lines.append(
+                f"  {backend.namespace:<9} dispatch={caps.idempotent_dispatch} "
+                f"revision={caps.optimistic_revision} prompt={caps.empty_prompt_check} "
+                f"runtime={caps.runtime_detection}"
+            )
+        except Exception as error:  # noqa: BLE001 - a diagnostic must not die mid-report
+            lines.append(f"  {backend.namespace:<9} could not be asked ({error})")
+
+    for line in lines:
+        print(line)
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="yapitalism")
     subcommands = parser.add_subparsers(dest="command", required=True)
-    doctor_parser = subcommands.add_parser("doctor", help="project a scrubbed fixture")
-    doctor_parser.add_argument("fixture", type=Path)
-
-    receipt_parser = subcommands.add_parser("receipt", help="project persisted receipt evidence")
-    receipt_commands = receipt_parser.add_subparsers(dest="receipt_command", required=True)
-    receipt_show_parser = receipt_commands.add_parser("show", help="show one projected receipt")
-    receipt_show_parser.add_argument("command_id")
-    receipt_show_parser.add_argument("--ledger", type=Path, default=_state_root() / "events.jsonl")
-
-    ledger_parser = subcommands.add_parser("ledger", help="verify the authoritative evidence ledger")
-    ledger_commands = ledger_parser.add_subparsers(dest="ledger_command", required=True)
-    ledger_verify_parser = ledger_commands.add_parser("verify", help="verify sequence and hash-chain integrity")
-    ledger_verify_parser.add_argument("--ledger", type=Path, default=_state_root() / "events.jsonl")
-    ledger_manifest_parser = ledger_commands.add_parser("manifest", help="summarize authority and projection state")
-    ledger_manifest_parser.add_argument("--ledger", type=Path, default=_state_root() / "events.jsonl")
-    ledger_migrate_parser = ledger_commands.add_parser("migrate", help="copy a legacy ledger into a new chained file")
-    ledger_migrate_parser.add_argument("--source", type=Path, required=True)
-    ledger_migrate_parser.add_argument("--output", type=Path, required=True)
-
+    subcommands.add_parser(
+        "doctor",
+        help="is it healthy right now: server, token, backends, and who enforces what",
+    )
     subcommands.add_parser(
         "setup",
         help="interview this machine: what it has, what that buys, what is missing",
@@ -645,22 +373,6 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser = superset_commands.add_parser("status", help="read terminal snapshot metadata")
     status_parser.add_argument("--manifest", required=True, type=Path)
     status_parser.add_argument("--max-lines", type=int)
-
-    send_parser = superset_commands.add_parser("send", help="dry-run or send and prove a canary")
-    send_parser.add_argument("--manifest", required=True, type=Path)
-    send_parser.add_argument("--text", required=True)
-    send_parser.add_argument("--canary", required=True)
-    send_parser.add_argument("--expect-revision", required=True, type=int)
-    send_parser.add_argument("--client-token")
-    send_parser.add_argument("--ledger", type=Path, default=_state_root() / "events.jsonl")
-    send_parser.add_argument("--claim-dir", type=Path, default=_state_root() / "claims")
-    send_parser.add_argument(
-        "--confirm-send",
-        action="store_true",
-        help="perform the side-effecting terminal.send call (default: dry-run)",
-    )
-    send_parser.add_argument("--canary-timeout", type=float, default=8.0)
-    send_parser.add_argument("--poll-interval", type=float, default=0.3)
     return parser
 
 
@@ -682,15 +394,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = build_parser().parse_args(argv)
     if args.command == "doctor":
-        return doctor(args.fixture)
-    if args.command == "receipt" and args.receipt_command == "show":
-        return receipt_show(args.ledger, args.command_id)
-    if args.command == "ledger" and args.ledger_command == "verify":
-        return ledger_verify(args.ledger)
-    if args.command == "ledger" and args.ledger_command == "manifest":
-        return ledger_manifest(args.ledger)
-    if args.command == "ledger" and args.ledger_command == "migrate":
-        return ledger_migrate(args.source, args.output)
+        return doctor_live()
     if args.command == "demo":
         from .demo import run_demo
 
@@ -705,8 +409,6 @@ def main(argv: list[str] | None = None) -> int:
         return superset_setup(args)
     if args.command == "superset" and args.superset_command == "status":
         return superset_status(args.manifest, args.max_lines)
-    if args.command == "superset" and args.superset_command == "send":
-        return superset_send(args)
     raise AssertionError(f"unhandled command: {args.command}")
 
 

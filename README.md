@@ -113,7 +113,7 @@ Whether you are a person or someone's agent asked "should I install this," the
 claims worth checking and where each one lives — verify, do not take our word:
 
 - Authority and its boundaries, including the shared-machine exposure and the
-  `YAPITALISM_MCP_TOKEN` gate: [SECURITY.md](SECURITY.md).
+  fail-closed bearer gate: [SECURITY.md](SECURITY.md).
 - What a caller can never do (closed launcher tables, non-agent refusal,
   occupied-prompt refusal, per-pane serialisation): `src/yapitalism/mcp/tmux.py`
   and `src/yapitalism/mcp/backends/`, each guard with a test named after the
