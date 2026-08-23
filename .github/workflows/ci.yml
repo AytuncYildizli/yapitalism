@@ -25,7 +25,9 @@ jobs:
         run: ruff check src tests
       - name: Unit tests
         run: python -m unittest discover -s tests -v
-      - name: Doctor replay
-        run: python -m yapitalism.cli doctor fixtures/stuck-revision.json
+      - name: Doctor runs without a server and says so
+        # The live doctor's job is a report, not a gate: with no server in CI it
+        # must still exit 0 and name what is missing rather than crash.
+        run: python -m yapitalism.cli doctor
       - name: Build wheel
         run: python -m build --wheel
