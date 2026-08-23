@@ -249,7 +249,14 @@ class RealSessionTests(unittest.TestCase):
 
         self.assertTrue(outcome.created)
         self.assertFalse(outcome.runtime_confirmed)
-        self.assertEqual(outcome.reason, "runtime_not_observed")
+        # Two honest outcomes, depending on who wins a real race: the settle loop
+        # observes the pane before the process dies (runtime_not_observed), or the
+        # process — and with it possibly the whole tmux server — is gone before the
+        # first look (process_exited_immediately). Both say "created, and nothing
+        # confirmed runs in it"; pinning one of them was a coin-flip test.
+        self.assertIn(
+            outcome.reason, ("runtime_not_observed", "process_exited_immediately")
+        )
         self.assertNotEqual(outcome.target_id, "")
 
     def test_a_duplicate_session_name_is_an_error_not_a_silent_reuse(self) -> None:

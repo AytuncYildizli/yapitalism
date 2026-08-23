@@ -313,6 +313,27 @@ class TmuxBackend:
             try:
                 observed = observe_runtime(target_id)
             except TmuxError as error:
+                # The session was created and its process died before this first
+                # look — with no other session, the whole tmux server can exit,
+                # and the observation errors with "no current target". That is
+                # not a failure of THIS call to report as an exception: the
+                # session really existed, the command really ran and exited, and
+                # the caller needs those two facts, not a stack trace. Raising
+                # here was measured as a race — the same dying launcher passed or
+                # failed depending on whether the capture beat the server's exit.
+                gone = ("no current target", "can't find", "server exited", "no server running")
+                if any(marker in str(error) for marker in gone):
+                    return CreateOutcome(
+                        target_id=target_id,
+                        created=True,
+                        runtime_requested=runtime,
+                        runtime_observed="unknown",
+                        session_name=session_name,
+                        cwd=cwd,
+                        reason="process_exited_immediately",
+                        blocked_on="",
+                        fidelity=fidelity,
+                    )
                 raise BackendError(str(error)) from None
             if observed == runtime:
                 break

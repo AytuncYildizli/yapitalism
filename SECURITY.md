@@ -18,14 +18,15 @@ no authority a local process lacked; it adds *discipline* on top of authority
 that already existed — closed launcher tables, agent-runtime gates, occupied-
 prompt refusal, receipts.
 
-**On a shared machine, one hole — and it has a lid.** 127.0.0.1 is reachable by
-every local user's processes, so the HTTP transport crossing user boundaries is
-the one real escalation path. Set `YAPITALISM_MCP_TOKEN` and every HTTP request
-must carry `Authorization: Bearer <token>`, compared in constant time; without
-the right token the server answers 401 before any tool runs. The stdio
-transport never had this exposure: the client spawns the process, so the OS
-already decided who may talk to it. On a multi-user machine, set the token or
-use stdio.
+**On a shared machine, one hole — closed by default since 0.3.0.** 127.0.0.1 is
+reachable by every local user's processes, so the HTTP transport crossing user
+boundaries is the one real escalation path. The server therefore requires a
+bearer token on every HTTP request: minted on first start, stored 0600 under
+`$XDG_STATE_HOME/yapitalism/http-token`, compared in constant time, 401 before
+any tool runs. `yapitalism setup` prints the registration lines that carry it;
+`YAPITALISM_MCP_TOKEN` overrides it; `YAPITALISM_MCP_INSECURE=1` opts out and
+says so on stderr. The stdio transport never had this exposure: the client
+spawns the process, so the OS already decided who may talk to it.
 
 The server refuses to bind any non-loopback host, unconditionally. There is no
 account, no cloud, no telemetry, and no outbound network access except to the

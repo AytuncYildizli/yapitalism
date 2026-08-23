@@ -56,3 +56,60 @@ class LoopbackTokenVerifierTests(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class TokenPersistenceTests(unittest.TestCase):
+    """Fail-closed only works if the token survives restarts.
+
+    A token regenerated per boot would 401 every registered client after every
+    restart — an outage shaped like a security feature. So: minted once, 0600,
+    stable, and the env var wins when set.
+    """
+
+    def setUp(self) -> None:
+        import os
+        import tempfile
+
+        self._dir = tempfile.TemporaryDirectory()
+        self._old = os.environ.get("XDG_STATE_HOME")
+        os.environ["XDG_STATE_HOME"] = self._dir.name
+        self.addCleanup(self._restore)
+
+    def _restore(self) -> None:
+        import os
+
+        if self._old is None:
+            os.environ.pop("XDG_STATE_HOME", None)
+        else:
+            os.environ["XDG_STATE_HOME"] = self._old
+        self._dir.cleanup()
+
+    def test_minted_once_and_stable(self) -> None:
+        from yapitalism.mcp.server import load_or_create_http_token
+
+        first = load_or_create_http_token()
+        second = load_or_create_http_token()
+        self.assertEqual(first, second)
+        self.assertGreaterEqual(len(first), 32)
+
+    def test_owner_only_permissions(self) -> None:
+        import os
+        import stat
+
+        from yapitalism.mcp.server import _http_token_path, load_or_create_http_token
+
+        load_or_create_http_token()
+        mode = stat.S_IMODE(os.stat(_http_token_path()).st_mode)
+        self.assertEqual(mode, 0o600)
+
+    def test_an_existing_file_is_read_not_replaced(self) -> None:
+        import os
+        import pathlib
+
+        from yapitalism.mcp.server import _http_token_path, load_or_create_http_token
+
+        path = pathlib.Path(_http_token_path())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("operator-chosen-token\n")
+        os.chmod(path, 0o600)
+        self.assertEqual(load_or_create_http_token(), "operator-chosen-token")

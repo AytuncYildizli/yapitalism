@@ -168,15 +168,35 @@ def ledger_migrate(source_path: Path, output_path: Path) -> int:
     return 0
 
 
-_HTTP_FORM = "codex mcp add yapitalism --url http://127.0.0.1:8792/mcp"
 _STDIO_FORM = '{"mcpServers": {"yapitalism": {"command": "yapitalism-mcp", "args": ["--stdio"]}}}'
-# Hermes takes the same URL, but its `mcp add` insists on an interactive tool
-# picker, so the honest instruction is the config block it actually reads —
-# a command that stalls in a script is not an instruction.
-_HERMES_FORM = (
-    "add under mcp_servers: in ~/.hermes/config.yaml -> "
-    "yapitalism: {url: http://127.0.0.1:8792/mcp}"
-)
+
+
+def _registration_lines() -> list[str]:
+    """The client registrations, carrying whatever auth the server will demand.
+
+    HTTP is fail-closed since 0.3.0: the server mints a bearer token on first
+    start and 401s without it, so a registration line without the token is an
+    instruction to get locked out. The token itself is printed here — this runs
+    in the operator's own terminal, which is exactly where their secret belongs —
+    but the server only ever prints the PATH, because launchd keeps its stderr.
+    """
+    from .mcp.server import _http_token_path, load_or_create_http_token
+
+    token = load_or_create_http_token()
+    url = "http://127.0.0.1:8792/mcp"
+    return [
+        f"  token (0600):            {_http_token_path()}",
+        f"  Codex:                   export YAPITALISM_MCP_TOKEN=$(cat {_http_token_path()})",
+        f"                           codex mcp add yapitalism --url {url} "
+        "--bearer-token-env-var YAPITALISM_MCP_TOKEN",
+        f'  Claude Code:             claude mcp add --transport http yapitalism {url} '
+        f'--header "Authorization: Bearer {token}"',
+        "  Hermes:                  add under mcp_servers: in ~/.hermes/config.yaml ->",
+        f"                           yapitalism: {{url: {url}, headers: "
+        f"{{Authorization: Bearer {token}}}}}",
+        f"  stdio clients (rest):    {_STDIO_FORM}",
+        "                           (stdio needs no token: the OS decided who may spawn it)",
+    ]
 
 
 def _mark(present: bool) -> str:
@@ -226,9 +246,7 @@ def render_setup(env: Environment) -> list[str]:
         "",
         "Registering the server with a client",
         "",
-        f"  URL clients (Codex):     {_HTTP_FORM}",
-        f"  Hermes:                  {_HERMES_FORM}",
-        f"  stdio clients (rest):    {_STDIO_FORM}",
+        *_registration_lines(),
     ]
     return lines
 
