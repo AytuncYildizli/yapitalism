@@ -368,3 +368,13 @@ h1 .hit{
 .banNote{font-family:var(--mono,ui-monospace,monospace);font-size:.72rem;
   text-transform:uppercase;letter-spacing:.08em;color:#5d5f52;
   margin:.7rem 0 0;text-align:center}
+
+/* /community: quiet by design. This page states facts about a thing we did not
+   make; it must not look like a pitch, so no acid, no burst, no goblin. */
+.communityWrap{max-width:44rem;margin:0 auto;padding:4rem 1.4rem;color:var(--ink)}
+.communityWrap h1{font-size:2rem;margin:.4rem 0 1rem}
+.communityWrap p{max-width:60ch;color:#4a4c40;line-height:1.55}
+.caLabel{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.3rem}
+.ca{display:block;font-family:var(--mono);font-size:.82rem;border:3px solid var(--ink);
+  background:var(--paper);padding:.7rem .9rem;word-break:break-all;margin-bottom:1rem}
+.feeNote{font-size:.85rem;color:#5d5f52}
