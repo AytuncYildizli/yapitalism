@@ -6,6 +6,42 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-08-23
+
+The launch release. Everything here came from asking four independent coding
+agents "should my user install this?" and fixing what they objected to — in the
+code, not in the wording.
+
+### Added
+
+- **`YAPITALISM_MCP_TOKEN`**: optional bearer auth for the HTTP transport,
+  enforced inside FastMCP's auth middleware with a constant-time compare.
+  Loopback is not a user boundary — 127.0.0.1 is reachable by every local
+  user's processes — so on a shared machine the open port was the one real
+  exposure; this closes it. Measured live in all three directions: no token
+  401, wrong token 401, right token serves. Unset, the transport behaves as
+  before and prints a one-line stderr nudge. stdio needs no token: the OS
+  already decided who may talk to a spawned process.
+- **SECURITY.md**: the threat model, led by the fact reviewers kept missing —
+  on a single-user machine this grants no authority a local process lacked,
+  because `tmux send-keys` was always there. Plus what a caller can never do,
+  what GREEN claims exactly, and the honest limits.
+- **docs/recipes.md**: five watcher patterns over the same six tools, with
+  working prompts. The permission watch caught, on its first real day, an agent
+  silently holding a wallet-transaction approval for six hours.
+- **README "Reviewing this repo"**: a verdict-free index of claims and where to
+  verify each. An earlier draft told reviewing agents what to conclude and was
+  rightly flagged as prompt-shaped persuasion; facts only now.
+
+### Fixed
+
+- A limits entry that had gone stale in the safe-sounding direction: "never
+  tested against a real stock host" was false since 0.2.4 — the shipped
+  Superset is the stock build, and canary-proven sends have landed against it
+  live ever since.
+
+343 tests.
+
 ## [0.2.7] - 2026-08-22
 
 ### Added
