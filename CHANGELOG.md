@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-24
+
+First-contact fixes from the first owner-run peer setup — a bare MacBook Pro
+added over the tailnet.
+
+### Fixed
+
+- tmux is resolved on every call — PATH first, then the places package
+  managers actually install it — so `brew install tmux` after the server
+  started (or a launchd-minimal PATH) no longer reports "tmux is not
+  installed" until something is restarted.
+- The HTTP transport prints its own one-line status (version, host, port)
+  instead of the framework's startup banner, which carried a third party's
+  deploy advertisement.
+
 ## [0.4.0] - 2026-08-24
 
 Machines are panes too.
