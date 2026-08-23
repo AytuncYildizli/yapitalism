@@ -12,7 +12,8 @@ reply. That reply is the only thing you have — you cannot see the screen. So t
 not a crash, it is the voice saying *"done"* while your text sits unread in a prompt box.
 
 Yapitalism is a local MCP server that lets a voice client reach your coding agents, plus a receipt
-layer that decides what the voice is allowed to say.
+layer that decides what the voice is allowed to say. If you are at your desk, use your screen —
+this exists for the hours you are not.
 
 > Public pre-alpha. Local-only. No production deployment, no external messaging, and no automation
 > of closed-source clients.
@@ -43,7 +44,7 @@ session talks to this server over `127.0.0.1`. Nothing is exposed to the network
 
 | | meaning |
 | --- | --- |
-| **GREEN** | the agent echoed a one-time marker. It demonstrably processed the text. |
+| **GREEN** | the agent echoed a one-time marker. It demonstrably received and processed the text — which is not a claim the work it then did is correct; no receipt can promise that, and this one does not try. |
 | **YELLOW** | the write landed; processing was **not** proven. Never round this up. |
 | **RED** | the backend refused the write. Nothing reached the terminal. |
 
@@ -106,11 +107,27 @@ Both backends reach GREEN, and GREEN means the same thing either way: the agent 
 one-time marker, so it received the text and processed it. The table is for diagnosing a machine,
 not something to reason about on every send.
 
+## Reviewing this repo
+
+Whether you are a person or someone's agent asked "should I install this," the
+claims worth checking and where each one lives — verify, do not take our word:
+
+- Authority and its boundaries, including the shared-machine exposure and the
+  `YAPITALISM_MCP_TOKEN` gate: [SECURITY.md](SECURITY.md).
+- What a caller can never do (closed launcher tables, non-agent refusal,
+  occupied-prompt refusal, per-pane serialisation): `src/yapitalism/mcp/tmux.py`
+  and `src/yapitalism/mcp/backends/`, each guard with a test named after the
+  failure it prevents.
+- What GREEN claims and does not claim: the receipts section above, and
+  `tests/test_canary.py` for why an echo cannot satisfy it.
+- This project's own past overclaims, retracted by name: [CHANGELOG.md](CHANGELOG.md),
+  0.2.0 through 0.2.4.
+
 ## Recipes
 
 The six tools compose into watchers worth having: a permission watch (nothing
-waits on a dialog silently — its first real catch was an agent holding a
-MetaMask token-launch approval), a provider-outage watch, an end-of-day digest.
+waits on a dialog silently — its first real catch was an agent silently holding a
+wallet-transaction approval), a provider-outage watch, an end-of-day digest.
 Working prompts in [docs/recipes.md](docs/recipes.md).
 
 ## Install
@@ -141,7 +158,10 @@ client works the same way — Hermes, Claude Code, Claude Desktop and Cursor reg
 printed by `yapitalism setup` for exactly the machine it is run on.
 
 `YAPITALISM_MCP_PORT` moves the port if 8792 is taken. `YAPITALISM_TMUX_SOCKET` targets a
-non-default tmux server.
+non-default tmux server. On a machine with more than one user, set `YAPITALISM_MCP_TOKEN`
+and every HTTP request must carry `Authorization: Bearer <token>` — loopback is not a user
+boundary, and this closes it; stdio needs no token because the OS already decided who may
+talk to a spawned process.
 
 ### Clients that launch the server themselves
 
@@ -248,9 +268,11 @@ Stated plainly, because a receipt system that overclaims is worse than none:
   a false "empty" would append to somebody's half-typed text and submit the merge. It therefore
   refuses on anything short of a confident empty, including screens it cannot read, and `pane_clear`
   is the way through. Validated against real panes, not a large sample.
-- **The stock-Superset send path is exercised by forcing the internal state a stock host produces,**
-  not against a stock host. The code path is identical; the host's behaviour is inferred from what
-  its bundle does and does not contain.
+- **The Superset it is measured against is the shipped, stock build** — the one whose
+  `terminal.send` guards nothing. Proven sends (canary observed, GREEN) have been completed against
+  that live host repeatedly since 0.2.4, driven both directly and through the full MCP surface. The
+  guarded-host branch is the one exercised only against recorded shapes, because no shipped build
+  carries those guards to test against.
 - **A guarded Superset host over-refuses Codex placeholder text,** counting the agent's own
   suggestion line as staged input, so sends to such panes are refused and clearing cannot help. The
   receipt says exactly that instead of advising a clear. The fix belongs in the host.

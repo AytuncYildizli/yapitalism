@@ -8,8 +8,10 @@ driving the loopback HTTP server; `claude -p` or `codex exec` under plain cron
 work the same way).
 
 The first recipe is running in production and caught, on its first real day, a
-coding agent silently holding a **MetaMask token-launch approval** — exactly the
-kind of thing that must reach a human and had been reaching no one.
+coding agent silently holding a **wallet-transaction approval** — the class of
+irreversible, high-stakes confirmation that must reach a human, and had been
+reaching no one. That catch is also why none of these recipes auto-approve
+anything.
 
 Two rules every recipe below obeys:
 
