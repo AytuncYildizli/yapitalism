@@ -113,3 +113,22 @@ jobs:
         run: |
           ./mcp-publisher login github-oidc
           ./mcp-publisher publish
+
+  # The Releases page is what a visitor actually sees; tags alone leave it
+  # frozen on whatever release was last created by hand. Found mid-launch,
+  # showing "0.2.0 · Latest" while 0.2.8 was live on PyPI.
+  github-release:
+    needs: [registry]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the GitHub Release for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "${GITHUB_REF_NAME#v}" \
+            --generate-notes --latest \
+            || echo "release already exists; leaving it alone"
