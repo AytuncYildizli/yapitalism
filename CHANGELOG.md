@@ -6,6 +6,50 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-08-23
+
+The product-loop release: install, see a proven GREEN, wire your phone to the
+panes. First band of the post-launch program (docs/roadmap.md).
+
+### Added
+
+- **`yapitalism watch`** — the wallet-approval catch as a built-in, no LLM in the
+  loop: poll the panes, classify with the same detectors the send path trusts for
+  refusing writes, notify a webhook (ntfy.sh-compatible plain text) on
+  TRANSITIONS only — blocked, provider outage, exited, text-parked-across-two-
+  polls, and each recovery. Reads only, by construction. `--once` for cron.
+- **`yapitalism demo`** — first canary-proven GREEN in about a minute: a real
+  agent in a throwaway tmux session on an isolated socket, one message with
+  proof, the receipt, cleanup. Answers exactly one known first-run screen
+  (codex's update menu, matched by literal text, answered with Skip); everything
+  else is reported, never typed into.
+- **Real Superset pane states.** Every pane said `unknown`; the code read a
+  session field the shipped rows do not carry. States now come from the
+  binding's `lastEventType` (vocabulary read out of the shipped bundle):
+  `PermissionRequest`/`Elicitation` → `waiting_input`, turn-ended events →
+  `idle`, `SessionEnd` → `exited`, anything else — including unknown events —
+  → `running`, never "ready". `watch` announces a `waiting_input` pane without
+  reading a single line.
+- **`docs/operator-prompt.md`** — the standing instructions we run in the bridge
+  agent, linked from the README.
+- **Linux, owned rather than assumed**: the full install → send → verify →
+  canary → GREEN loop runs on a bare `python:3.11-slim` container, including the
+  negative control (an echo of the submitted text must not satisfy acceptance).
+
+### Fixed
+
+- **tmux sends could drop the Enter.** The paste and the Enter went out
+  back-to-back, and a booting codex was measured ingesting the text and losing
+  the submit — message parked at "0 in · 0 out" while the receipt said
+  `injected`. The same staged-not-submitted failure the Superset path was taught
+  about in 0.2.x, found on tmux by running `yapitalism demo`. The write now
+  settles, verifies the composer released the text, retries Enter once, and
+  otherwise reports `staged_not_submitted`.
+- Two newly observed codex composer placeholders (`{feature}`, `/review`) join
+  the admissibility table, so an idle codex is not refused as occupied.
+
+358 tests.
+
 ## [0.2.8] - 2026-08-23
 
 The launch release. Everything here came from asking four independent coding

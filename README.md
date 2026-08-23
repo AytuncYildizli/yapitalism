@@ -139,7 +139,9 @@ Working prompts in [docs/recipes.md](docs/recipes.md).
 
 ## Install
 
-Needs Python 3.11+ and `tmux`. Everything runs on your machine; nothing is exposed to the network.
+Needs Python 3.11+ and `tmux`, on macOS or Linux — the full send-and-prove loop is exercised on
+a bare `python:3.11-slim` container per release, not just assumed portable. Everything runs on
+your machine; nothing is exposed to the network.
 
 ```bash
 # 1. install
