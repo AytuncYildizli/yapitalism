@@ -35,3 +35,33 @@
 - Prepare upstream MCP contributions only if write/merge access exists.
 
 **Kill:** if collaborators do not use the status surface or the core only tracks one transient vendor bug, archive as an operator toolkit.
+
+## Post-launch program (agreed 2026-08-23)
+
+Sequenced, one release per band. Earlier bands do not wait for later ones.
+
+**0.2.9 — the product loop**
+- `yapitalism watch`: the wallet-approval catch as a built-in, LLM-free watcher —
+  poll panes, detect waiting/blocked/outage/exit transitions, notify a webhook
+  (ntfy.sh-compatible) or stdout. Notify on transitions only.
+- `yapitalism demo`: first canary-proven GREEN in two minutes, self-cleaning.
+- `docs/operator-prompt.md`: the operator instructions we actually use, for any
+  voice client.
+- Real pane states for Superset agents from the binding's `lastEventType`
+  (today: `unknown`).
+- Own Linux officially: live smoke + README line (CI is already green there).
+
+**0.3.0 — the breaking release**
+- HTTP auth fail-closed by default: token generated on first run, stored 0600,
+  `setup` prints registration lines carrying it. `YAPITALISM_MCP_INSECURE=1`
+  opts out. This was the last standing objection of the strictest agent
+  reviewer, and we said "0.3.0-shaped" in public.
+- Delete the ledger/claims/model triad (725 lines the MCP path never imports);
+  CLI shrinks to `setup` + `doctor`.
+
+**0.4.0 — machines are panes too (tailscale)**
+- `RemoteBackend`: a peer's yapitalism HTTP endpoint mounted into the local
+  `BackendRegistry`, ids namespaced `machine:backend:id`, receipts passed
+  through unchanged — the peer proved them, we do not restate them. Peers come
+  from a 0600 config; any non-localhost peer REQUIRES its token. The tailnet is
+  the transport, not the trust story: same bearer auth as local.
