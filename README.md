@@ -244,19 +244,12 @@ The five-leg model is usable without the MCP server:
 5. `deliver` — a final update reached the user
 
 Evidence carries provenance — `api`, `terminal_diff`, `ui_observation`, `user_report`, `inferred` —
-and `inferred` may never mark a leg succeeded. Events append to a `0600` JSONL ledger with a
-per-row hash chain, contiguous sequence, and single-use confirmation claims for anything that
-mutates a terminal.
+and `inferred` may never mark a leg succeeded.
 
-```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
-PYTHONPATH=src python3 -m yapitalism.cli doctor fixtures/stuck-revision.json
-# RED command=voice-canary-20260730 failed=accept reason=canary_timeout
-```
-
-That fixture is the incident this project came from: the audio session stayed alive, spoken progress
-stopped, two 180-second watchers saw the terminal frozen at revision `920118`, and the canary never
-arrived. The product is not "fix the voice client". It is **never fake GREEN**.
+The incident this project came from: the audio session stayed alive, spoken progress stopped, two
+180-second watchers saw the terminal frozen at revision `920118`, and the canary never arrived —
+while the voice kept implying work. The product is not "fix the voice client". It is **never fake
+GREEN**.
 
 CLI surface: `doctor`, `receipt show`, `ledger verify|manifest|migrate`, and `superset status|send`.
 A confirmed `superset send` requires reusing the exact `client-token` a dry run emitted, snapshots
