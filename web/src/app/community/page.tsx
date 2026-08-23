@@ -24,6 +24,19 @@ export default function CommunityPage() {
 			</p>
 			<p className="caLabel">contract address, verbatim, so you can verify rather than trust a link:</p>
 			<code className="ca">{CA}</code>
+			<p className="feeNote">
+				We did not create this token and do not control it. Someone in the
+				community launched it and pointed its creator fees at the
+				maintainer — a mechanic the platform allows. We appreciate the
+				support: claimed fees fund development of this project. None of
+				that changes the paragraph above — we still cannot vouch for the
+				token, and we are not asking you to buy it.
+			</p>
+			<p className="feeNote">
+				We did not launch this token and are not asking you to buy it. Its
+				creator fees are directed to the maintainer and have been claimed;
+				they fund development of this project.
+			</p>
 			<p>
 				<a href="/">← back to the product</a>
 			</p>
