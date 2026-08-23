@@ -275,7 +275,8 @@ export function YapitalismPage() {
 					<p className="legal">
 						Not affiliated with or endorsed by OpenAI. “API at Home” is campaign
 						language, not an official API claim. Third-party product names are
-						used descriptively. Blocked is a valid result. Fake green isn&apos;t.
+						used descriptively. Blocked is a valid result. Fake green isn&apos;t.{" "}
+						<a href="/community">community</a>
 					</p>
 				</div>
 			</section>
