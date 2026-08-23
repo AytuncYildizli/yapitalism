@@ -63,10 +63,33 @@ def _socket_args() -> list[str]:
     return ["-L", socket] if socket else []
 
 
+# Where package managers put tmux when it is not on the server's PATH. A
+# launchd service gets a minimal PATH, and a server started before
+# `brew install tmux` keeps its stale one — both made a working tmux invisible
+# and told the operator to restart something. Resolved per call, not cached,
+# so installing tmux is enough.
+_TMUX_FALLBACKS = (
+    "/opt/homebrew/bin/tmux",
+    "/usr/local/bin/tmux",
+    "/home/linuxbrew/.linuxbrew/bin/tmux",
+    "/usr/bin/tmux",
+)
+
+
+def _tmux_binary() -> str:
+    found = shutil.which("tmux")
+    if found:
+        return found
+    for candidate in _TMUX_FALLBACKS:
+        if os.access(candidate, os.X_OK):
+            return candidate
+    raise TmuxError("tmux is not installed")
+
+
 def _run(args: list[str], timeout: int = _TIMEOUT_SECONDS) -> str:
     try:
         completed = subprocess.run(
-            ["tmux", *_socket_args(), *args],
+            [_tmux_binary(), *_socket_args(), *args],
             capture_output=True,
             text=True,
             timeout=timeout,

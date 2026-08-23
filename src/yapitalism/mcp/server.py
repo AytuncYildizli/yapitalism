@@ -424,7 +424,13 @@ def main(argv: list[str] | None = None) -> None:
             file=sys.stderr,
         )
         mcp.auth = LoopbackTokenVerifier(token)
-    mcp.run(transport="http", host=host, port=port)
+    # No FastMCP banner: it carries a third party's deploy ad, and this line
+    # says the one thing an operator checks the terminal for.
+    print(
+        f"yapitalism-mcp {__version__} serving http://{host}:{port}/mcp",
+        file=sys.stderr,
+    )
+    mcp.run(transport="http", host=host, port=port, show_banner=False)
 
 
 
