@@ -6,6 +6,45 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-24
+
+The council release: three slices a four-model advisory panel and one operator
+converged on, built the same day.
+
+### Added
+
+- **Turn receipts** — the second receipt. `pane_await` watches a pane until
+  the agent's turn ends and says how: `ended` (idle prompt, stable screen —
+  spoken with "not that the work is correct" attached, never as "done"),
+  `waiting_input` (a blocking dialog, with the question in `tail`),
+  `agent_error` (a named failure line — 401, rate limit — not a timeout),
+  `exited`, `running`, `unreadable`. `pane_task` is send-then-await in one
+  call: instruct, walk away, come back to the verdict. `ended` re-verifies the
+  agent process is alive before it is claimed. Both forward to peers whole.
+- **Write authority by transport.** The bearer token answers who is calling;
+  it never answered what they may do. stdio clients write, always — the OS
+  made that trust decision at spawn. Writes over HTTP are refused by default,
+  with the fix named in the refusal: `yapitalism authority allow-http-writes`,
+  once, on that machine (`yapitalism setup` asks the same question while
+  printing HTTP registration lines). `yapitalism-mcp --read-only` refuses
+  writes on every transport, so the watcher can run with zero write surface.
+  Every write result is stamped with its `origin`. `doctor` shows the answer.
+- **Agent identity bracket** on the tmux send path: the admitted agent process
+  is fingerprinted (pid + start time) after the gate and re-verified
+  immediately before Enter. An agent that exits into a shell mid-write gets
+  the text typed but never submitted (`staged_agent_changed`), because typing
+  is recoverable and Enter into a shell is command execution.
+- SECURITY.md gained the explicit threat model ("a send is code execution;
+  the composer of the send is the attack surface") and a precise statement of
+  what a GREEN canary round-trip does and does not prove.
+
+### Changed
+
+- **Breaking for HTTP setups upgrading from 0.4:** sends over HTTP return
+  `http_writes_not_allowed` until the operator allows them (one command,
+  above). The server says so at startup, the refusal says so in the receipt,
+  and reading/watching are unaffected.
+
 ## [0.4.2] - 2026-08-24
 
 The first cross-machine send taught two lessons in one night.

@@ -301,6 +301,16 @@ def _speak_rejected(
             "Not sent: the first attempt at this message was cut short and it "
             "is unclear whether it arrived. I can read the pane and tell you."
         )
+    if phase == "staged_agent_changed":
+        # The one refusal where "not sent" needs a warning attached: the text
+        # was typed before the identity check failed, so it is sitting in
+        # whatever now owns that pane — possibly a shell prompt. Enter was
+        # deliberately never pressed.
+        return (
+            "Not sent: the process in that pane changed while the text was "
+            "being typed, so Enter was never pressed. The unsubmitted text is "
+            "still sitting there — look at that pane before doing anything else."
+        )
     if phase == "staged_not_submitted":
         # Observed live: the text reached a Codex composer but two Enters did not
         # submit it. The operator has to know the message is sitting there, or they

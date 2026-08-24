@@ -74,6 +74,11 @@ class TmuxSendGuardTests(unittest.TestCase):
         stays incapable of executing anything.
         """
         self.backend._runtime_of = lambda target_id: "codex"  # type: ignore[method-assign]
+        # A stable identity to match the stubbed runtime: the fingerprint
+        # bracket must see the same process before typing and before Enter.
+        self.backend._fingerprint_of = (  # type: ignore[method-assign]
+            lambda target_id: (4242, "codex", "Mon Jan  1 00:00:00 2026")
+        )
 
     def as_fake_composer(self) -> None:
         """Respawn the pane as a composer that CLEARS on submit.
@@ -278,6 +283,10 @@ class TmuxSendGuardTests(unittest.TestCase):
 
         idle = "earlier output\n› Use /skills to list available skills"
         with patch.object(tb.TmuxBackend, "_runtime_of", counting), patch.object(
+            tb.TmuxBackend,
+            "_fingerprint_of",
+            return_value=(4242, "codex", "Mon Jan  1 00:00:00 2026"),
+        ), patch.object(
             tb, "capture_pane", return_value=idle
         ), patch.object(tb, "send_literal"), patch.object(tb, "send_enter"), patch.object(
             tb, "time"

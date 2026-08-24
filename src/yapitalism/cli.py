@@ -96,6 +96,18 @@ def render_setup(env: Environment) -> list[str]:
         "",
         *_registration_lines(),
     ]
+    from .authority import http_writes_allowed
+
+    lines += [
+        "",
+        "  HTTP write authority:    "
+        + (
+            "allowed"
+            if http_writes_allowed()
+            else "DENIED — HTTP clients can read and watch, but every send is "
+            "refused until `yapitalism authority allow-http-writes`"
+        ),
+    ]
     return lines
 
 
@@ -113,6 +125,29 @@ def setup_report(args: argparse.Namespace) -> int:
     env = inspect()
     for line in render_setup(env):
         print(line)
+
+    from .authority import http_writes_allowed, set_http_writes
+
+    if not http_writes_allowed() and sys.stdin.isatty():
+        # Registering an HTTP client and being refused on the first send is the
+        # worst first minute this tool can produce, so the interview asks HERE,
+        # where the registration lines were just read. Asked, never implied.
+        print("")
+        answer = (
+            input(
+                "Allow WRITES over HTTP for the clients above? "
+                "(stdio clients never need this) [y/N] "
+            )
+            .strip()
+            .lower()
+        )
+        if answer in ("y", "yes"):
+            path = set_http_writes(True)
+            print(f"HTTP writes: allowed (recorded at {path}).")
+            print("Restart yapitalism-mcp for the running server to pick this up.")
+        else:
+            print("Left denied; HTTP sends will be refused with the fix named.")
+
     if not (env.superset.host_live and not env.manifest_written):
         return 0
     print("")
@@ -295,6 +330,38 @@ def _write_peers(path: Path, payload: dict) -> None:
         handle.write("\n")
 
 
+def authority_command(action: str) -> int:
+    """Show or change what a caller may WRITE, by transport.
+
+    The change is a file the server reads at startup, so it takes effect on the
+    next `yapitalism-mcp` start — said out loud, because "I allowed it and it
+    still refuses" would otherwise be the first support question.
+    """
+    from .authority import authority_path, http_writes_allowed, set_http_writes
+
+    if action == "allow-http-writes":
+        path = set_http_writes(True)
+        print(f"HTTP writes: allowed (recorded at {path})")
+        print("Restart yapitalism-mcp for the running server to pick this up.")
+        return 0
+    if action == "deny-http-writes":
+        path = set_http_writes(False)
+        print(f"HTTP writes: denied (recorded at {path})")
+        print("Restart yapitalism-mcp for the running server to pick this up.")
+        return 0
+    allowed = http_writes_allowed()
+    print("Who may WRITE through this machine's yapitalism server:")
+    print("  stdio clients  always — the OS made that trust decision at spawn")
+    print(
+        f"  HTTP clients   {'allowed' if allowed else 'DENIED (default)'} "
+        f"({authority_path()})"
+    )
+    if not allowed:
+        print("  allow with: yapitalism authority allow-http-writes")
+    print("  reads, watching and doctor work on every transport regardless")
+    return 0
+
+
 def doctor_live() -> int:
     """Is the thing actually working, right now?
 
@@ -352,6 +419,17 @@ def doctor_live() -> int:
     lines.append(
         f"  token      {'yes' if token else 'no '}  {_http_token_path()}"
         + ("" if token else "  (minted on the server's first HTTP start)")
+    )
+    from .authority import http_writes_allowed
+
+    lines.append(
+        "  authority  "
+        + (
+            "HTTP writes allowed"
+            if http_writes_allowed()
+            else "HTTP writes DENIED (allow: `yapitalism authority allow-http-writes`)"
+        )
+        + "; stdio always writes"
     )
 
     lines += ["", "Backends, live", ""]
@@ -430,6 +508,18 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands.add_parser(
         "doctor",
         help="is it healthy right now: server, token, backends, and who enforces what",
+    )
+    authority_parser = subcommands.add_parser(
+        "authority",
+        help="who may WRITE through this server (stdio always; HTTP only if allowed)",
+    )
+    authority_parser.add_argument(
+        "authority_action",
+        nargs="?",
+        default="show",
+        choices=["show", "allow-http-writes", "deny-http-writes"],
+        help="show the current answer, or change it for HTTP clients "
+        "(restart yapitalism-mcp afterwards; it reads this at startup)",
     )
     subcommands.add_parser(
         "setup",
@@ -510,6 +600,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "peers":
         return peers_command(args)
+    if args.command == "authority":
+        return authority_command(args.authority_action)
     if args.command == "doctor":
         return doctor_live()
     if args.command == "demo":
