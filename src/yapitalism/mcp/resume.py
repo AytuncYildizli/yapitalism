@@ -93,10 +93,10 @@ def resume_argv_for(runtime: str, session_id: str | None = None) -> ResumePlan |
 def speak_fidelity(fidelity: str) -> str:
     """What the operator has to hear about which conversation came back."""
     if fidelity == EXACT:
-        return "kaydedilmiş oturum kimliğiyle geri getirildi"
+        return "restored by its saved session id"
     if fidelity == LAST:
         return (
-            "en son oturum istendi; bunun kastettiğin oturum olduğuna dair bir "
-            "garanti yok"
+            "the most recent session was requested; there is no guarantee it "
+            "is the one you meant"
         )
-    return "hangi oturumun geldiği belirsiz"
+    return "it is unclear which session came back"

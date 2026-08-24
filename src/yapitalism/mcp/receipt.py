@@ -27,17 +27,23 @@ statuses, the phase, and the enforcement attribution all stay in `as_dict()`,
 where the model reading the payload, the log, and `doctor` can see them. The
 spoken line collapses to two things a person can act on:
 
-    "codex aldı."                     -> nothing to do, carry on
-    "Gönderilmedi: <sebep>. <çıkış>"  -> the text never left; act
-    "Gönderdim ama ... doğrulayamadım" -> it DID leave; do not resend blindly
+    "codex got it."                   -> nothing to do, carry on
+    "Not sent: <why>. <way out>"      -> the text never left; act
+    "Sent, but ... could not verify"  -> it DID leave; do not resend blindly
 
 That last distinction is the one thing the collapse must not lose. A refusal and
 an unproven delivery both mean "no confirmation", but they call for opposite
 moves: the first can be retried, and retrying the second may deliver the message
-twice. So a YELLOW line never says "tekrar göndereyim mi" — it offers to LOOK.
+twice. So a YELLOW line never offers to resend — it offers to LOOK.
 
-Enforcement attribution used to be read aloud on every GREEN ("bazı kontrolleri
-host değil bu taraf yaptı"). It is the maintainer's honesty aesthetic and it is
+The spoken lines are English on purpose: they are source material for the
+voice client, which answers the operator in whatever language the operator
+speaks. Baking one human language into the receipt was a locale bug dressed
+as a feature (and it was Turkish until the night an international release
+shipped with it).
+
+Enforcement attribution used to be read aloud on every GREEN ("this side ran
+some checks, not the host"). It is the maintainer's honesty aesthetic and it is
 invisible to the operator: there is no different action behind it. It now lives
 in the payload only.
 """
@@ -136,11 +142,11 @@ def build_receipt(
             # as attribution: something was already staged in that prompt and their
             # text was merged with it on their own instruction.
             speak = (
-                f"{agent} aldı. Prompt'ta bekleyen metin vardı, "
-                "sen istediğin için yine de gönderdim."
+                f"{agent} got it. There was text already waiting in the "
+                "prompt; you asked me to send anyway, so I did."
             )
         else:
-            speak = f"{agent} aldı."
+            speak = f"{agent} got it."
         return Receipt(
             status="GREEN",
             phase=send.phase,
@@ -151,7 +157,7 @@ def build_receipt(
             client_guarantees=client,
         )
 
-    # Every YELLOW below says GÖNDERDİM first and offers to LOOK, never to resend.
+    # Every YELLOW below says SENT first and offers to LOOK, never to resend.
     # The text is already in the terminal; a second write is a second message.
     if acceptance.reason == "no_canary":
         return Receipt(
@@ -159,7 +165,24 @@ def build_receipt(
             phase=send.phase,
             accepted=False,
             reason="acceptance_not_testable",
-            speak=f"Gönderdim ama {agent} aldı mı, doğrulayamadım.",
+            speak=f"Sent, but I could not verify that {agent} received it.",
+            missing_guarantees=degraded,
+            client_guarantees=client,
+        )
+
+    if acceptance.agent_error:
+        # The screen names the failure; say the name, not a shrug. Worded as a
+        # claim about the SCREEN because that is all the marker proves — the
+        # operator's own message could contain the words "rate limit".
+        return Receipt(
+            status="YELLOW",
+            phase=send.phase,
+            accepted=False,
+            reason="agent_error_on_screen",
+            speak=(
+                f"Sent, but {agent} does not seem to have processed it — the "
+                f"screen shows '{acceptance.agent_error}'. Want me to look?"
+            ),
             missing_guarantees=degraded,
             client_guarantees=client,
         )
@@ -176,9 +199,9 @@ def build_receipt(
             accepted=False,
             reason=acceptance.reason or "canary_timeout_pane_moving",
             speak=(
-                f"Gönderdim, terminalde hareket var ama {agent} aldı mı, "
-                f"doğrulayamadım; {int(acceptance.waited_seconds)} saniye "
-                "bekledim. Bakayım mı?"
+                f"Sent, but I could not verify {agent} processed it within "
+                f"{int(acceptance.waited_seconds)} seconds; the screen was "
+                "still changing. Want me to look?"
             ),
             missing_guarantees=degraded,
             client_guarantees=client,
@@ -190,8 +213,8 @@ def build_receipt(
         accepted=False,
         reason=acceptance.reason or "canary_timeout",
         speak=(
-            f"Gönderdim ama terminalde hiç hareket olmadı; {agent} aldı mı, "
-            "doğrulayamadım. Bakayım mı?"
+            f"Sent, but nothing on screen changed and I could not verify "
+            f"{agent} received it. Want me to look?"
         ),
         missing_guarantees=degraded,
         client_guarantees=client,
@@ -200,93 +223,94 @@ def build_receipt(
 
 #: What the operator calls the thing they are talking to. The runtime name is
 #: already the word they use out loud — "codex", "claude", "kimi" — so it is
-#: spoken as-is, with no suffix that would need vowel harmony per runtime.
+#: spoken as-is.
 def _agent_name(runtime: str) -> str:
-    return runtime.strip() or "ajan"
+    return runtime.strip() or "the agent"
 
 
 def _speak_rejected(
     phase: str,
     reason: str = "",
-    agent: str = "ajan",
+    agent: str = "the agent",
     clearing_known_useless: bool = False,
 ) -> str:
-    """One shape: GÖNDERİLMEDİ, why, and the way out.
+    """One shape: NOT SENT, why, and the way out.
 
-    The lead word is fixed. A refusal is the one case where the operator can
+    The lead words are fixed. A refusal is the one case where the operator can
     safely retry, and it has to be distinguishable from an unproven delivery by
-    the first word alone — the rest of the sentence may not be heard.
+    the first words alone — the rest of the sentence may not be heard.
     """
     if reason == "host_says_occupied_screen_says_empty":
         # Never advise clearing here: it has been measured not to work. The host
         # counts a Codex placeholder suggestion as staged text, and there is
         # nothing in the prompt for a clear to remove.
         return (
-            "Gönderilmedi: prompt boş görünüyor ama dolu sayılıyor, muhtemelen "
-            f"{agent} kendi öneri metnini yazılmış sanıyor. Temizlemek burada "
-            "işe yaramaz."
+            "Not sent: the prompt looks empty but the host counts it as "
+            f"occupied — {agent} probably treats its own placeholder "
+            "suggestion as typed text. Clearing does not help here."
         )
     if reason == "host_says_unreadable_screen_says_empty":
         return (
-            "Gönderilmedi: OpenCode prompt boş görünüyor ama doğrulanamadı. "
-            "Kontrollü gönderim için açık onay gerekiyor."
+            "Not sent: the OpenCode prompt looks empty but could not be "
+            "verified. A guarded send needs your explicit go-ahead."
         )
     if phase == "rejected_trust_prompt":
         return (
-            f"Gönderilmedi: {agent} bir güven onayı ekranında bekliyor, oraya "
-            "yazmak menüden rastgele bir seçenek seçebilirdi."
+            f"Not sent: {agent} is waiting at a trust-confirmation screen, and "
+            "typing there could pick a menu option at random."
         )
     if phase == "rejected_auth_prompt":
-        return f"Gönderilmedi: {agent} giriş ekranında bekliyor."
+        return f"Not sent: {agent} is waiting at a login screen."
     if phase == "rejected_confirm_prompt":
-        return f"Gönderilmedi: {agent} bir onay bekliyor."
+        return f"Not sent: {agent} is waiting for a confirmation."
     if phase == "rejected_prompt_not_empty":
         if clearing_known_useless:
             return (
-                "Gönderilmedi: prompt alanında bekleyen metin var ve temizlemeyi "
-                f"denedim, {agent} tuşlara cevap vermiyor. Bu panele makinede "
-                "bakman gerekiyor."
+                "Not sent: there is text waiting in the prompt and I tried "
+                f"clearing it, but {agent} is not responding to keys. This "
+                "pane needs a look at the machine."
             )
         return (
-            "Gönderilmedi: prompt alanında bekleyen metin var. İstersen "
-            "temizleyip tekrar deneyebilirim."
+            "Not sent: there is text waiting in the prompt. I can clear it "
+            "and retry if you want."
         )
     if phase == "rejected_prompt_unreadable" and clearing_known_useless:
         return (
-            "Gönderilmedi: prompt alanı okunamıyor ve temizlemeyi denedim, "
-            f"{agent} tuşlara cevap vermiyor. Bu panele makinede bakman gerekiyor."
+            "Not sent: the prompt cannot be read and I tried clearing it, but "
+            f"{agent} is not responding to keys. This pane needs a look at "
+            "the machine."
         )
     if phase == "rejected_prompt_unreadable":
         # Previously fell through to the generic line, so a real and specific
         # obstruction - an open menu or overlay - was reported as an unexplained
         # refusal. The information existed and was discarded at the last step.
         return (
-            "Gönderilmedi: prompt alanı okunamadı, muhtemelen bir menü ya da "
-            "katman açık. Ne beklediğine bakabilirim."
+            "Not sent: the prompt could not be read — probably a menu or an "
+            "overlay is open. I can look at what it is waiting for."
         )
     if phase == "rejected_not_an_agent":
         # Typing into a shell and pressing Enter is running a command. The pane may
         # have been an agent when it was listed and be a shell now.
         return (
-            "Gönderilmedi: orada bir ajan çalışmıyor, yazsaydım komut "
-            "çalıştırmış olurdum."
+            f"Not sent: no agent is running there — typing would have "
+            "executed a shell command."
         )
     if phase == "duplicate_after_ambiguous_write":
         # NOT "I blocked a repeat": the first attempt may never have arrived.
         return (
-            "Gönderilmedi: bu mesajın ilk denemesi yarıda kaldı, gidip gitmediği "
-            "belirsiz. Paneli okuyup durumu söyleyebilirim."
+            "Not sent: the first attempt at this message was cut short and it "
+            "is unclear whether it arrived. I can read the pane and tell you."
         )
     if phase == "staged_not_submitted":
         # Observed live: the text reached a Codex composer but two Enters did not
         # submit it. The operator has to know the message is sitting there, or they
         # will believe it was delivered and wait.
         return (
-            "Gönderilmedi: metin prompt'ta duruyor, Enter iki kez denendi ama "
-            "kabul edilmedi."
+            "Not sent: the text is sitting in the prompt; Enter was tried "
+            "twice and it was not accepted."
         )
     if phase.startswith("duplicate_"):
-        return "Gönderilmedi: aynı mesajın tekrarıydı, ikinci kez yazmadım."
+        return "Not sent: this was a repeat of the same message, so I did not type it twice."
     if phase == "rejected_revision_changed":
-        return "Gönderilmedi: terminal değişmiş, güvenli olmadığı için yazmadım."
-    return "Gönderilmedi: terminale hiçbir şey gitmedi."
+        return "Not sent: the terminal changed underneath, so it was not safe to write."
+    return "Not sent: nothing reached the terminal."

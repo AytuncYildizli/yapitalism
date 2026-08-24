@@ -2,8 +2,8 @@
 
 Found by driving 0.2.5 through its MCP surface against a wedged codex pane:
 
-    pane_send  -> "Gönderilmedi: ... İstersen temizleyip tekrar deneyebilirim."
-    pane_clear -> "Tuşu gönderdim ama terminalde hiçbir şey değişmedi."
+    pane_send  -> "Not sent: ... I can clear it and retry if you want."
+    pane_clear -> "I sent the key but nothing on screen changed."
     pane_clear --action clear-line -> the same
     pane_send  -> the SAME sentence, offering the same clear again
 
@@ -36,20 +36,20 @@ def refusal(phase: str, *, useless: bool) -> str:
 class RefusalOffersSomethingThatWorksTests(unittest.TestCase):
     def test_the_first_refusal_offers_the_clear(self) -> None:
         line = refusal("rejected_prompt_not_empty", useless=False)
-        self.assertIn("temizleyip tekrar deneyebilirim", line)
+        self.assertIn("clear it and retry", line)
 
     def test_after_a_clear_that_did_nothing_it_offers_something_else(self) -> None:
         line = refusal("rejected_prompt_not_empty", useless=True)
-        self.assertNotIn("temizleyip tekrar deneyebilirim", line)
-        self.assertIn("cevap vermiyor", line)
-        self.assertIn("makinede", line)
+        self.assertNotIn("clear it and retry", line)
+        self.assertIn("not responding to keys", line)
+        self.assertIn("look at the machine", line)
 
     def test_an_unreadable_prompt_gets_the_same_treatment(self) -> None:
         """The other phase a stuck pane produces, and it had the same loop."""
         first = refusal("rejected_prompt_unreadable", useless=False)
         after = refusal("rejected_prompt_unreadable", useless=True)
         self.assertNotEqual(first, after)
-        self.assertIn("makinede", after)
+        self.assertIn("look at the machine", after)
 
     def test_it_still_leads_with_the_same_word(self) -> None:
         """The two-state rule holds: RED is RED, whatever the way out is."""
@@ -57,7 +57,7 @@ class RefusalOffersSomethingThatWorksTests(unittest.TestCase):
             for useless in (False, True):
                 with self.subTest(phase=phase, useless=useless):
                     self.assertTrue(
-                        refusal(phase, useless=useless).startswith("Gönderilmedi:")
+                        refusal(phase, useless=useless).startswith("Not sent:")
                     )
 
     def test_no_other_refusal_changes(self) -> None:

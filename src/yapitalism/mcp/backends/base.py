@@ -281,3 +281,7 @@ class AcceptanceOutcome:
     pane_changed_recently: bool = False
     #: How long acceptance was actually waited for.
     waited_seconds: float = 0.0
+    #: A known failure marker visible in the pane's tail when the wait ended —
+    #: "please run /login", "rate limit", … — or "". A claim about the SCREEN,
+    #: not the agent: it must be spoken as "the screen shows X".
+    agent_error: str = ""

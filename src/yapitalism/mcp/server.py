@@ -277,7 +277,16 @@ def await_acceptance_patiently(
     reason = (
         "canary_timeout_pane_moving" if changed_recently else "canary_timeout_pane_still"
     )
-    return AcceptanceOutcome(False, attempts, reason, changed_recently, ended - started)
+    # The screen was read the whole wait; before shrugging, check whether it
+    # already names the failure. The first cross-machine send spent 45 seconds
+    # next to "API Error: 401 · Please run /login" and then spoke a generic
+    # "could not verify" — the diagnosis was on screen, unread.
+    from ..screen_errors import find_agent_error
+
+    agent_error = find_agent_error(previous) if previous else ""
+    return AcceptanceOutcome(
+        False, attempts, reason, changed_recently, ended - started, agent_error
+    )
 
 
 def _http_token_path() -> "os.PathLike[str]":
@@ -604,7 +613,7 @@ def _spoken_pane_name(cwd: str, runtime: str) -> str:
     The id stays in the payload, where the model needs it to make the next call.
     """
     folder = cwd.rstrip("/").rsplit("/", 1)[-1] if cwd else ""
-    return f"{folder} klasöründeki {runtime}" if folder else runtime
+    return f"the {runtime} in {folder}" if folder else runtime
 
 
 #: Panes where a clear was attempted and the screen did not move. Bounded and
@@ -681,16 +690,16 @@ def panes_create(
         # instruction, and the send that follows returns an honest YELLOW whose
         # cause is invisible unless this is said out loud.
         speak = (
-            f"{_spoken_pane_name(cwd, runtime)} başladı ama bir onay ekranında "
-            f"bekliyor ({outcome.blocked_on}); iş göndermeden önce orayı geçmek "
-            "gerekiyor."
+            f"{_spoken_pane_name(cwd, runtime)} started but is waiting at a "
+            f"confirmation screen ({outcome.blocked_on}); that needs to be "
+            "passed before sending work."
         )
     elif outcome.runtime_confirmed:
-        speak = f"{_spoken_pane_name(cwd, outcome.runtime_observed)} hazır."
+        speak = f"{_spoken_pane_name(cwd, outcome.runtime_observed)} is ready."
     else:
         speak = (
-            f"Oturum açıldı ama {runtime} çalıştığı doğrulanamadı; "
-            f"{_spoken_pane_name(cwd, runtime)} boş olabilir, temizlenmesi gerekebilir."
+            f"The session opened but I could not verify {runtime} is running; "
+            f"{_spoken_pane_name(cwd, runtime)} may be empty and may need clearing."
         )
     return {"ok": True, "speak": speak, **outcome.as_dict()}
 
@@ -742,17 +751,17 @@ def panes_resume(
     fidelity_line = speak_fidelity(outcome.fidelity)
     if not outcome.runtime_confirmed:
         speak = (
-            f"Oturum oluşturuldu ama {runtime} içinde çalışmıyor: "
-            f"{_spoken_pane_name(cwd, runtime)}. Temizlenmesi gerekiyor."
+            f"The session was created but {runtime} is not running in it: "
+            f"{_spoken_pane_name(cwd, runtime)}. It needs clearing."
         )
     elif outcome.blocked_on:
         speak = (
-            f"{_spoken_pane_name(cwd, runtime)} geri geldi ({fidelity_line}) ama bir "
-            f"ekranda bekliyor ({outcome.blocked_on}); iş göndermeden önce orayı "
-            "geçmek gerekiyor."
+            f"{_spoken_pane_name(cwd, runtime)} is back ({fidelity_line}) but "
+            f"is waiting at a screen ({outcome.blocked_on}); that needs to be "
+            "passed before sending work."
         )
     else:
-        speak = f"{_spoken_pane_name(cwd, runtime)} geri geldi: {fidelity_line}."
+        speak = f"{_spoken_pane_name(cwd, runtime)} is back: {fidelity_line}."
     return {"ok": True, "speak": speak, **outcome.as_dict()}
 
 
@@ -847,18 +856,16 @@ def pane_clear(target_id: str, action: str = "escape") -> dict[str, object]:
         target_id, bool(result["recognised_block_cleared"] or result["pane_changed"])
     )
     if result["recognised_block_cleared"]:
-        speak = (
-            f"{result['blocking_before']} ekranı kapandı. Şimdi gönderebiliriz."
-        )
+        speak = f"The {result['blocking_before']} screen is gone. We can send now."
     elif result["pane_changed"]:
         speak = (
-            "Tuşu gönderdim, terminalde bir şey değişti ama prompt'un boşaldığını "
-            "doğrulayamam. Denemek için gönderebiliriz."
+            "I sent the key and something on screen changed, but I cannot "
+            "verify the prompt is empty. We can try a send."
         )
     else:
         speak = (
-            "Tuşu gönderdim ama terminalde hiçbir şey değişmedi; muhtemelen "
-            "işe yaramadı."
+            "I sent the key but nothing on screen changed; it probably did "
+            "not work."
         )
     return {"ok": True, "target_id": target_id, "speak": speak, **result}
 
