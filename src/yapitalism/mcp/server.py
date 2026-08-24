@@ -76,7 +76,32 @@ _authority_state: dict[str, object] = {
     "transport": "stdio",
     "read_only": False,
     "http_writes": True,
+    # Starting or resuming an agent is MORE authority than typing into one
+    # that exists, so over HTTP it has its own switch. stdio keeps it, as with
+    # every write: the OS made that trust decision at spawn.
+    "remote_create": True,
 }
+
+
+def _refuse_create(action: str) -> dict[str, object] | None:
+    """The create/resume gate: everything the write gate refuses, plus one more."""
+    refused = _refuse_write(action)
+    if refused:
+        return refused
+    if _authority_state["transport"] == "http" and not _authority_state["remote_create"]:
+        return {
+            "ok": False,
+            "status": "RED",
+            "reason": "remote_create_not_allowed",
+            "origin": "http",
+            "speak": (
+                "Not sent: this machine does not allow starting or resuming "
+                "agents remotely. On that machine run `yapitalism authority "
+                "allow-remote-create` once. Sending to agents that already "
+                "run is a separate permission and may already work."
+            ),
+        }
+    return None
 
 
 def _refuse_write(action: str) -> dict[str, object] | None:
@@ -116,6 +141,80 @@ def _refuse_write(action: str) -> dict[str, object] | None:
             ),
         }
     return None
+
+
+def _find_live_pane(target_id: str) -> dict[str, object] | None:
+    """This pane's row from a LIVE listing — local or on its peer — or None."""
+    owner = peers.owner_of(target_id)
+    if owner is not None:
+        local_id = owner.strip(target_id)
+        try:
+            listed = owner.call_tool("panes_list", {})
+        except BackendError:
+            return None
+        for pane in listed.get("panes", []):
+            if pane.get("target_id") == local_id:
+                return pane
+        return None
+    found, _, _ = registry.list_all()
+    for pane in found:
+        if pane.get("target_id") == target_id:
+            return pane
+    return None
+
+
+def _resolve_target(spoken: str) -> tuple[str, dict[str, object] | None]:
+    """A spoken name to its verified target id; real ids pass through untouched.
+
+    Names re-verify their binding against a live listing on every use, because
+    tmux reuses pane ids: the `%2` a name was bound to last week can be a
+    different agent — or a shell — today. A stale name is REFUSED, never
+    retargeted; "probably the right codex" is not a target.
+    """
+    if ":" in spoken:
+        return spoken, None
+    from ..names import load_names
+
+    try:
+        table = load_names()
+    except ValueError as error:
+        return spoken, {"ok": False, "error": str(error)}
+    entry = table.get(spoken)
+    if entry is None:
+        known = ", ".join(sorted(table)) or "none yet"
+        return spoken, {
+            "ok": False,
+            "error": (
+                f"'{spoken}' is neither a target id nor a known name "
+                f"(known names: {known}); bind one with panes_name"
+            ),
+        }
+    target_id = str(entry["target_id"])
+    pane = _find_live_pane(target_id)
+    if pane is None:
+        return spoken, {
+            "ok": False,
+            "reason": "stale_name",
+            "bound_to": target_id,
+            "error": (
+                f"'{spoken}' is bound to a pane that no longer exists. "
+                "Refusing rather than guessing — re-bind it with panes_name."
+            ),
+        }
+    expected = str(entry.get("runtime", ""))
+    actual = str(pane.get("runtime", ""))
+    if expected and actual != expected:
+        return spoken, {
+            "ok": False,
+            "reason": "stale_name",
+            "bound_to": target_id,
+            "error": (
+                f"'{spoken}' was bound to a {expected} pane, but that pane "
+                f"now runs {actual}. Refusing to retarget — re-bind it with "
+                "panes_name if this is intended."
+            ),
+        }
+    return target_id, None
 
 
 def _forward_to_peer(target_id: str, tool: str, arguments: dict) -> dict | None:
@@ -202,6 +301,21 @@ def panes_list() -> dict[str, object]:
                 {"backend": f"{peer.namespace}:{entry.get('backend', '?')}",
                  "error": str(entry.get("error", ""))}
             )
+    # Names ride on the panes they belong to, so the voice can say "billing"
+    # back without a second call. A broken names file must not break LISTING —
+    # it is reported, and the panes still come through.
+    try:
+        from ..names import load_names
+
+        by_target = {
+            entry["target_id"]: name for name, entry in load_names().items()
+        }
+        for pane in panes:
+            named = by_target.get(str(pane.get("target_id", "")))
+            if named:
+                pane["name"] = named
+    except ValueError as error:
+        errors.append({"backend": "names", "error": str(error)})
     payload: dict[str, object] = {
         # Absence deliberately does not count. This was `not errors` with absence
         # folded into errors, so every machine without Superset got `ok: false`
@@ -225,6 +339,9 @@ def pane_read(target_id: str, lines: int = 200) -> dict[str, object]:
     so it may hold wrapped lines, prompts and ANSI leftovers — summarize it
     rather than reading it aloud verbatim.
     """
+    target_id, unresolved = _resolve_target(target_id)
+    if unresolved:
+        return unresolved
     remote = _forward_to_peer(target_id, "pane_read", {"lines": lines})
     if remote is not None:
         return remote
@@ -234,6 +351,69 @@ def pane_read(target_id: str, lines: int = 200) -> dict[str, object]:
     except BackendError as error:
         return {"ok": False, "error": str(error), "target_id": target_id}
     return {"ok": True, "target_id": target_id, "text": text}
+
+
+@mcp.tool
+def panes_name(name: str, target_id: str) -> dict[str, object]:
+    """Bind a spoken name to a pane, so later calls can say `billing` for `tmux:%4`.
+
+    The binding records what the pane RUNS right now (runtime, folder), and
+    every later use re-verifies it against a live listing: a name whose pane
+    disappeared or changed runtime is refused, never silently retargeted.
+
+    This changes where future writes route, so it passes the same write
+    authority gate a send does. Names are lowercase words (letters, digits,
+    hyphens, max 32); they may not shadow a backend or peer namespace.
+    """
+    refused = _refuse_write("naming a pane")
+    if refused:
+        return refused
+    from ..names import save_name, validate_name
+
+    problem = validate_name(name, peer_names=peers.names)
+    if problem:
+        return {"ok": False, "error": problem}
+    if ":" not in target_id:
+        return {
+            "ok": False,
+            "error": "target_id must be a real id from panes_list, "
+            "e.g. tmux:%0 or mbp3:tmux:%2",
+        }
+    pane = _find_live_pane(target_id)
+    if pane is None:
+        return {
+            "ok": False,
+            "error": f"no live pane at {target_id}; names bind only to panes "
+            "that exist right now",
+        }
+    entry = {
+        "target_id": target_id,
+        "runtime": str(pane.get("runtime", "")),
+        "folder": str(pane.get("folder", "") or pane.get("project", "")),
+    }
+    path = save_name(name, entry)
+    what = entry["runtime"] or "pane"
+    where = f" in {entry['folder']}" if entry["folder"] else ""
+    return {
+        "ok": True,
+        "name": name,
+        **entry,
+        "stored_at": str(path),
+        "speak": f"'{name}' now means that {what}{where}.",
+    }
+
+
+@mcp.tool
+def panes_unname(name: str) -> dict[str, object]:
+    """Forget a spoken name. The pane itself is untouched."""
+    refused = _refuse_write("removing a name")
+    if refused:
+        return refused
+    from ..names import remove_name
+
+    if not remove_name(name):
+        return {"ok": False, "error": f"no name '{name}' to remove"}
+    return {"ok": True, "name": name, "speak": f"'{name}' no longer names anything."}
 
 
 #: How long a pane may sit unchanged before the wait is abandoned.
@@ -448,6 +628,9 @@ def main(argv: list[str] | None = None) -> None:
 
     _authority_state["transport"] = "http"
     _authority_state["http_writes"] = http_writes_allowed()
+    from ..authority import remote_create_allowed
+
+    _authority_state["remote_create"] = remote_create_allowed()
     if not _authority_state["http_writes"] and not _authority_state["read_only"]:
         # Said at startup, not only at refusal time: an operator upgrading from
         # 0.4 finds out HERE, not from a confused voice assistant later.
@@ -619,6 +802,9 @@ def pane_send(
     refused = _refuse_write("sending")
     if refused:
         return {**refused, "target_id": target_id}
+    target_id, unresolved = _resolve_target(target_id)
+    if unresolved:
+        return unresolved
     result = _pane_send_body(
         target_id,
         text,
@@ -841,6 +1027,9 @@ def pane_await(
     claimed. `timeout_seconds` is the total ceiling (capped at 30 minutes).
     Speak the returned `speak` verbatim or more conservatively.
     """
+    target_id, unresolved = _resolve_target(target_id)
+    if unresolved:
+        return unresolved
     remote = _forward_to_peer(
         target_id,
         "pane_await",
@@ -875,6 +1064,9 @@ def pane_task(
     refused = _refuse_write("sending")
     if refused:
         return {**refused, "target_id": target_id}
+    target_id, unresolved = _resolve_target(target_id)
+    if unresolved:
+        return unresolved
     remote = _forward_to_peer(
         target_id,
         "pane_task",
@@ -956,6 +1148,7 @@ def panes_create(
     runtime: str,
     cwd: str,
     session_name: str = "",
+    machine: str = "",
 ) -> dict[str, object]:
     """Start a new agent in a fresh tmux session and report what actually runs.
 
@@ -979,11 +1172,33 @@ def panes_create(
     created but <runtime> is not running in it", never as "started", and
     mention the pane so it can be cleaned up.
 
+    `machine` names a peer to start the agent THERE — `mbp3` starts it on that
+    machine, in that machine's `cwd`. The peer runs its own full gate chain
+    (its write authority, its remote-create authority, its closed launcher
+    table) and its receipt comes back verbatim. Empty means this machine.
+
     Superset terminals cannot be created here; its host owns their lifecycle.
     """
-    refused = _refuse_write("starting an agent")
+    refused = _refuse_create("starting an agent")
     if refused:
         return {**refused, "runtime": runtime}
+    if machine:
+        owner = peers.named(machine)
+        if owner is None:
+            known = ", ".join(peers.names) or "none"
+            return {
+                "ok": False,
+                "error": f"no peer named '{machine}'; peers: {known}",
+            }
+        try:
+            return owner.brand(
+                owner.call_tool(
+                    "panes_create",
+                    {"runtime": runtime, "cwd": cwd, "session_name": session_name},
+                )
+            )
+        except BackendError as error:
+            return {"ok": False, "error": str(error), "machine": machine}
     backend = registry.get("tmux")
     if backend is None or not hasattr(backend, "create_pane"):
         return {"ok": False, "error": "no backend on this machine can create panes"}
@@ -1020,6 +1235,7 @@ def panes_resume(
     cwd: str,
     session_id: str = "",
     session_name: str = "",
+    machine: str = "",
 ) -> dict[str, object]:
     """Bring a dead agent back in a fresh tmux session, and say how faithfully.
 
@@ -1047,10 +1263,35 @@ def panes_resume(
     `blocked_on` and `runtime_confirmed` mean exactly what they mean for
     `panes_create`: a resumed agent draws the same trust prompt and update menu a
     fresh one does, so read them before sending work.
+
+    `machine` names a peer to resume the agent THERE, under that machine's own
+    gate chain; its receipt and fidelity line come back verbatim.
     """
-    refused = _refuse_write("resuming an agent")
+    refused = _refuse_create("resuming an agent")
     if refused:
         return {**refused, "runtime": runtime}
+    if machine:
+        owner = peers.named(machine)
+        if owner is None:
+            known = ", ".join(peers.names) or "none"
+            return {
+                "ok": False,
+                "error": f"no peer named '{machine}'; peers: {known}",
+            }
+        try:
+            return owner.brand(
+                owner.call_tool(
+                    "panes_resume",
+                    {
+                        "runtime": runtime,
+                        "cwd": cwd,
+                        "session_id": session_id,
+                        "session_name": session_name,
+                    },
+                )
+            )
+        except BackendError as error:
+            return {"ok": False, "error": str(error), "machine": machine}
     backend = registry.get("tmux")
     if backend is None or not hasattr(backend, "resume_pane"):
         return {"ok": False, "error": "no backend here can resume an agent"}
@@ -1125,6 +1366,9 @@ def pane_clear(target_id: str, action: str = "escape") -> dict[str, object]:
     refused = _refuse_write("clearing a prompt")
     if refused:
         return {**refused, "target_id": target_id}
+    target_id, unresolved = _resolve_target(target_id)
+    if unresolved:
+        return unresolved
     remote = _forward_to_peer(target_id, "pane_clear", {"action": action})
     if remote is not None:
         return remote

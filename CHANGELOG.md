@@ -6,6 +6,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-24
+
+Council slices two and four: say names, and run the whole lifecycle on a peer.
+
+### Added
+
+- **Named targets.** `panes_name("billing", "tmux:%4")` binds a spoken word to
+  a pane; every target tool accepts the name from then on, and `panes_list`
+  shows names on their panes. The binding records the pane's runtime and
+  folder at name-time and is re-verified against a live listing on every use —
+  tmux reuses pane ids, so a name whose pane vanished or changed runtime is
+  refused with the reason (`stale_name`), never silently retargeted, and there
+  is no fuzzy matching. Names may not shadow backend or peer namespaces.
+  `panes_unname` forgets one. Both pass the write-authority gate, because a
+  name decides where future writes route.
+- **Peer lifecycle.** `panes_create` and `panes_resume` take a `machine`
+  argument naming a peer; the whole tool runs there under the peer's own gate
+  chain and its receipt comes back verbatim. Starting an agent remotely is
+  more authority than typing into one, so over HTTP it has its own default-off
+  switch: `yapitalism authority allow-remote-create`. `authority show` and
+  `doctor` report it.
+- **`yapitalism service`** prints a filled launchd plist or systemd unit
+  (absolute binary path, real PATH baked in — launchd searches nothing) for
+  keeping a server running across reboots, `--host` for a peer's tailnet bind.
+  Print-only; installing it stays the operator's decision.
+
 ## [0.5.0] - 2026-08-24
 
 The council release: three slices a four-model advisory panel and one operator

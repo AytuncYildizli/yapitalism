@@ -131,5 +131,9 @@ class PeerRegistry:
         name = target_id.split(":", 1)[0]
         return self._peers.get(name)
 
+    def named(self, name: str):
+        """The peer with exactly this name, or None. Never fuzzy."""
+        return self._peers.get(name)
+
     def all(self):
         return [self._peers[name] for name in self.names]
