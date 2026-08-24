@@ -6,6 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-08-24
+
+The first cross-machine send taught two lessons in one night.
+
+### Fixed
+
+- A send that times out next to a failure the agent printed — `Please run
+  /login`, a 401, a rate limit, an overloaded provider — now speaks that
+  failure by name instead of a generic "could not verify". One marker list
+  (`screen_errors.py`) is judged by both the send path and `yapitalism
+  watch`, so a login drop also shows up as a watcher finding. The wording
+  stays a claim about the screen, scoped to its last 30 lines; a proven
+  canary always outranks a stale error in scrollback.
+
+### Changed
+
+- Every spoken line — receipts, refusals, watcher findings, create/resume,
+  clear — now speaks English. The `speak` field is source material for a
+  voice client that answers in the operator's own language; hardcoding one
+  human language into it was a locale bug. The contract is unchanged:
+  "Not sent:" is safe to retry, "Sent, but" is never resent — only looked at.
+
 ## [0.4.1] - 2026-08-24
 
 First-contact fixes from the first owner-run peer setup — a bare MacBook Pro
