@@ -292,7 +292,7 @@ def _speak_rejected(
         # Typing into a shell and pressing Enter is running a command. The pane may
         # have been an agent when it was listed and be a shell now.
         return (
-            f"Not sent: no agent is running there — typing would have "
+            "Not sent: no agent is running there — typing would have "
             "executed a shell command."
         )
     if phase == "duplicate_after_ambiguous_write":
