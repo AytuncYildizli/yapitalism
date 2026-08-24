@@ -51,7 +51,30 @@ def http_writes_allowed() -> bool:
     return isinstance(data, dict) and data.get("http_writes") == "allow"
 
 
+def remote_create_allowed() -> bool:
+    """Whether HTTP callers may START or RESUME agents here.
+
+    Separate from `http_writes` on purpose: typing into an agent that already
+    exists and materialising a new process are different amounts of authority,
+    and the second must not ride in on the first. Default deny; fails closed
+    on a corrupt file, same as everything else here.
+    """
+    try:
+        data = json.loads(authority_path().read_text())
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("remote_create") == "allow"
+
+
+def set_remote_create(allow: bool) -> Path:
+    return _set_key("remote_create", "allow" if allow else "deny")
+
+
 def set_http_writes(allow: bool) -> Path:
+    return _set_key("http_writes", "allow" if allow else "deny")
+
+
+def _set_key(key: str, value: str) -> Path:
     path = authority_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     payload: dict[str, object] = {}
@@ -61,7 +84,7 @@ def set_http_writes(allow: bool) -> Path:
             payload = existing
     except (OSError, ValueError):
         pass
-    payload["http_writes"] = "allow" if allow else "deny"
+    payload[key] = value
     path.write_text(json.dumps(payload, indent=2) + "\n")
     path.chmod(0o600)
     return path

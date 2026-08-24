@@ -26,6 +26,7 @@ MCP client (Codex · Hermes · Claude Code · Claude Desktop · Cursor)
     ▼
 yapitalism MCP server          panes_list · pane_read · pane_send
     │                          pane_await · pane_task
+    │                          panes_name · panes_unname
     │                          panes_create · panes_resume · pane_clear
     ├── superset backend       local host-service over tRPC (127.0.0.1:48900)
     └── tmux backend           capture-pane / send-keys
@@ -178,6 +179,30 @@ anything. A peer on a public address is refused unless `allow_public` is said
 explicitly; the tailnet is the transport, not the trust story — the peer's
 bearer token still decides who may call. Configured peers show up in
 `yapitalism doctor` with live pane counts.
+
+Agents can be **started and resumed** on a peer too: `panes_create` and
+`panes_resume` take a `machine` argument naming one. The peer runs its own
+full gate chain — and starting an agent remotely is more authority than typing
+into one, so it has its own switch, off by default:
+`yapitalism authority allow-remote-create`, once, on the peer. To keep a
+peer's server alive across reboots, `yapitalism service --host <its tailnet
+IP>` prints a filled launchd plist or systemd unit; installing it stays your
+decision.
+
+### Say names, not ids
+
+Voice cannot say `mbp3:tmux:%2`. Bind a word to a pane once —
+
+```
+panes_name("billing", "tmux:%4")
+```
+
+— and every tool accepts `billing` from then on. The binding records what the
+pane runs at name-time and is re-verified against a live listing on every use:
+tmux reuses pane ids, so a name whose pane vanished or changed runtime is
+**refused with the reason**, never silently retargeted. No fuzzy matching —
+"probably the right codex" is not a target. Names appear on their panes in
+`panes_list`.
 
 ## Driving it well
 

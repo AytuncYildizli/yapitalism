@@ -337,28 +337,115 @@ def authority_command(action: str) -> int:
     next `yapitalism-mcp` start — said out loud, because "I allowed it and it
     still refuses" would otherwise be the first support question.
     """
-    from .authority import authority_path, http_writes_allowed, set_http_writes
+    from .authority import (
+        authority_path,
+        http_writes_allowed,
+        remote_create_allowed,
+        set_http_writes,
+        set_remote_create,
+    )
 
-    if action == "allow-http-writes":
-        path = set_http_writes(True)
-        print(f"HTTP writes: allowed (recorded at {path})")
+    changes = {
+        "allow-http-writes": (set_http_writes, True, "HTTP writes: allowed"),
+        "deny-http-writes": (set_http_writes, False, "HTTP writes: denied"),
+        "allow-remote-create": (
+            set_remote_create,
+            True,
+            "Remote create/resume over HTTP: allowed",
+        ),
+        "deny-remote-create": (
+            set_remote_create,
+            False,
+            "Remote create/resume over HTTP: denied",
+        ),
+    }
+    if action in changes:
+        setter, value, sentence = changes[action]
+        path = setter(value)
+        print(f"{sentence} (recorded at {path})")
         print("Restart yapitalism-mcp for the running server to pick this up.")
         return 0
-    if action == "deny-http-writes":
-        path = set_http_writes(False)
-        print(f"HTTP writes: denied (recorded at {path})")
-        print("Restart yapitalism-mcp for the running server to pick this up.")
-        return 0
-    allowed = http_writes_allowed()
+    writes = http_writes_allowed()
+    creates = remote_create_allowed()
     print("Who may WRITE through this machine's yapitalism server:")
-    print("  stdio clients  always — the OS made that trust decision at spawn")
+    print("  stdio clients   always — the OS made that trust decision at spawn")
     print(
-        f"  HTTP clients   {'allowed' if allowed else 'DENIED (default)'} "
+        f"  HTTP writes     {'allowed' if writes else 'DENIED (default)'} "
         f"({authority_path()})"
     )
-    if not allowed:
+    print(
+        f"  HTTP create     {'allowed' if creates else 'DENIED (default)'} — "
+        "starting/resuming agents remotely is more authority than typing"
+    )
+    if not writes:
         print("  allow with: yapitalism authority allow-http-writes")
+    if not creates:
+        print("  allow with: yapitalism authority allow-remote-create")
     print("  reads, watching and doctor work on every transport regardless")
+    return 0
+
+
+def service_command(host: str) -> int:
+    """Print a filled, ready-to-install service definition for this machine.
+
+    Print-only on purpose: `setup` is an interview and this is its handout.
+    The one thing it must get right is what launchd will NOT do for anyone —
+    search PATH, expand ~, read a login shell — so every path is absolute and
+    the PATH the agent binaries actually live in is baked into the unit.
+    """
+    import shutil
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    binary = shutil.which("yapitalism-mcp") or str(
+        _Path(_sys.executable).with_name("yapitalism-mcp")
+    )
+    path_value = os.environ.get("PATH", "/usr/bin:/bin")
+    home = str(_Path.home())
+    if sys.platform == "darwin":
+        print(f"""# save as ~/Library/LaunchAgents/com.yapitalism.mcp.plist, then:
+#   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.yapitalism.mcp.plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.yapitalism.mcp</string>
+  <key>ProgramArguments</key>
+  <array><string>{binary}</string></array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>YAPITALISM_MCP_HOST</key><string>{host}</string>
+    <key>YAPITALISM_MCP_PORT</key><string>8792</string>
+    <key>PATH</key><string>{path_value}</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>{home}/Library/Logs/yapitalism-mcp.log</string>
+  <key>StandardErrorPath</key><string>{home}/Library/Logs/yapitalism-mcp.log</string>
+  <key>ProcessType</key><string>Background</string>
+</dict>
+</plist>""")
+    else:
+        print(f"""# save as ~/.config/systemd/user/yapitalism-mcp.service, then:
+#   systemctl --user enable --now yapitalism-mcp
+[Unit]
+Description=yapitalism MCP server
+
+[Service]
+ExecStart={binary}
+Environment=YAPITALISM_MCP_HOST={host}
+Environment=YAPITALISM_MCP_PORT=8792
+Environment=PATH={path_value}
+Restart=always
+
+[Install]
+WantedBy=default.target""")
+    if host != "127.0.0.1":
+        print(
+            f"\n# {host} is not loopback: the server requires its bearer token "
+            "and refuses this bind outside the tailscale range.",
+            file=sys.stderr,
+        )
     return 0
 
 
@@ -517,9 +604,26 @@ def build_parser() -> argparse.ArgumentParser:
         "authority_action",
         nargs="?",
         default="show",
-        choices=["show", "allow-http-writes", "deny-http-writes"],
+        choices=[
+            "show",
+            "allow-http-writes",
+            "deny-http-writes",
+            "allow-remote-create",
+            "deny-remote-create",
+        ],
         help="show the current answer, or change it for HTTP clients "
         "(restart yapitalism-mcp afterwards; it reads this at startup)",
+    )
+    service_parser = subcommands.add_parser(
+        "service",
+        help="print a ready launchd plist / systemd unit for keeping the "
+        "server running (print-only; installing it stays your decision)",
+    )
+    service_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="address the service should bind (127.0.0.1, or this machine's "
+        "tailscale IP for a peer)",
     )
     subcommands.add_parser(
         "setup",
@@ -602,6 +706,8 @@ def main(argv: list[str] | None = None) -> int:
         return peers_command(args)
     if args.command == "authority":
         return authority_command(args.authority_action)
+    if args.command == "service":
+        return service_command(args.host)
     if args.command == "doctor":
         return doctor_live()
     if args.command == "demo":
