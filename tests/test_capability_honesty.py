@@ -414,26 +414,26 @@ class RefusalWordingTests(unittest.TestCase):
         a placeholder, and pane_clear left it untouched twice. The generic line told
         the operator to clear it, which is a loop."""
         line = self.speak("rejected_prompt_not_empty", "host_says_occupied_screen_says_empty")
-        self.assertIn("Temizlemek burada işe yaramaz", line)
+        self.assertIn("Clearing does not help here", line)
         generic = self.speak("rejected_prompt_not_empty")
-        self.assertIn("temizleyip", generic)
+        self.assertIn("clear it and retry", generic)
         self.assertNotEqual(line, generic)
 
     def test_an_ambiguous_write_is_not_spoken_as_a_blocked_repeat(self) -> None:
         line = self.speak("duplicate_after_ambiguous_write")
-        self.assertIn("belirsiz", line)
+        self.assertIn("unclear whether it arrived", line)
         # The genuine-duplicate wording asserts the first one arrived.
         self.assertNotIn("Aynı mesajın tekrarını engelledim", line)
 
     def test_a_shell_pane_refusal_says_why_it_matters(self) -> None:
-        self.assertIn("komut", self.speak("rejected_not_an_agent"))
+        self.assertIn("shell command", self.speak("rejected_not_an_agent"))
 
     def test_staged_text_is_reported_as_not_sent(self) -> None:
         """The operator must know the message is sitting in the prompt, or they
         wait for a reply that cannot come."""
         line = self.speak("staged_not_submitted")
         self.assertIn("prompt", line)
-        self.assertTrue(line.startswith("Gönderilmedi"), line)
+        self.assertTrue(line.startswith("Not sent"), line)
 
     def test_every_refusal_leads_with_the_same_word(self) -> None:
         """The lead word is the whole signal on a voice channel.
@@ -457,11 +457,11 @@ class RefusalWordingTests(unittest.TestCase):
         )
         for phase in phases:
             with self.subTest(phase=phase):
-                self.assertTrue(self.speak(phase).startswith("Gönderilmedi:"))
+                self.assertTrue(self.speak(phase).startswith("Not sent:"))
         self.assertTrue(
             self.speak(
                 "rejected_prompt_not_empty", "host_says_occupied_screen_says_empty"
-            ).startswith("Gönderilmedi:")
+            ).startswith("Not sent:")
         )
 
 
@@ -487,7 +487,7 @@ class ReceiptWordingTests(unittest.TestCase):
 
         receipt = self.receipt(HOST_GUARDED)
         self.assertEqual(receipt.status, "GREEN")
-        self.assertEqual(receipt.speak, "codex aldı.")
+        self.assertEqual(receipt.speak, "codex got it.")
         self.assertNotIn("client_guarantees", receipt.as_dict())
 
     def test_client_enforcement_is_recorded_not_spoken(self) -> None:
@@ -500,7 +500,7 @@ class ReceiptWordingTests(unittest.TestCase):
         # Nothing is unchecked on this path any more, so there is no
         # missing_guarantees list to carry.
         self.assertNotIn("missing_guarantees", payload)
-        self.assertEqual(receipt.speak, "codex aldı.")
+        self.assertEqual(receipt.speak, "codex got it.")
 
     def test_tmux_green_records_a_mix_of_checked_and_unchecked(self) -> None:
         """tmux checks two of three, so it is neither the old all-NONE nor a
@@ -512,7 +512,7 @@ class ReceiptWordingTests(unittest.TestCase):
         self.assertEqual(receipt.status, "GREEN")
         self.assertEqual(payload["client_guarantees"], ["idempotent_dispatch", "empty_prompt_check"])
         self.assertEqual(payload["missing_guarantees"], ["optimistic_revision"])
-        self.assertEqual(receipt.speak, "codex aldı.")
+        self.assertEqual(receipt.speak, "codex got it.")
 
     def test_no_spoken_line_carries_enforcement_vocabulary(self) -> None:
         """The regression this file exists to prevent, pointed the other way.

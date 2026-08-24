@@ -40,18 +40,16 @@ from .mcp.backends.base import AGENT_RUNTIMES, BackendError
 from .mcp.backends.tmux_backend import detect_blocking_prompt
 from .prompt_state import HAS_TEXT, detect_prompt_state
 
+# One list for every screen-reader: the watcher and the send path must name
+# the same failures, or a login drop is visible to one and mumbled by the
+# other (which is exactly how the first cross-machine 401 got spoken as a
+# generic "could not verify"). Auth markers included — a watcher that can say
+# "claude'un girişi düşmüş" is the notification that would have saved tonight.
+from .screen_errors import AGENT_ERROR_MARKERS as _OUTAGE_MARKERS
+
 #: Provider-failure lines, matched case-insensitively against the tail. Each one
 #: was seen on a real pane or in a real provider's error vocabulary; keep this
 #: list boring and literal.
-_OUTAGE_MARKERS = (
-    "service unavailable",
-    "rate limit",
-    "rate-limited",
-    "overloaded",
-    "quota exceeded",
-    "connection refused",
-    "internal server error",
-)
 
 #: How many trailing lines to judge. Same reasoning as the dialog window in the
 #: send path: a dialog owns the screen NOW; deep scrollback is history.
@@ -67,16 +65,16 @@ class Finding:
     detail: str
 
     def spoken(self) -> str:
-        name = f"{self.place} içindeki {self.runtime}".strip()
+        name = f"{self.runtime} in {self.place}".strip()
         if self.kind == "blocked":
-            return f"{name} bir onay bekletiyor: {self.detail}"
+            return f"{name} is holding a confirmation: {self.detail}"
         if self.kind == "outage":
-            return f"{name} sağlayıcı hatasında takılı: {self.detail}"
+            return f"{name} is stuck on a provider error: {self.detail}"
         if self.kind == "exited":
-            return f"{name} kapanmış; panel duruyor, ajan yok."
+            return f"{name} has exited; the pane is still open with no agent in it."
         if self.kind == "occupied":
-            return f"{name} prompt'unda gönderilmemiş metin bekliyor."
-        return f"{name} düzeldi."
+            return f"{name} has unsent text waiting in its prompt."
+        return f"{name} has recovered."
 
 
 def classify_pane(
@@ -214,7 +212,7 @@ def run_watch(
             try:
                 notify(notify_url, findings)
             except OSError as error:
-                emit(f"bildirim gönderilemedi: {error}")
+                emit(f"notification failed to send: {error}")
         if once:
             return 0
         sleeper(interval)

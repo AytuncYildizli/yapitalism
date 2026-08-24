@@ -309,15 +309,15 @@ class OverrideWordingTests(unittest.TestCase):
         it says. It is spoken as a consequence, not as an internal tier.
         """
         spoken = self.receipt("host_prompt_check_overridden", HOST_GUARDED_PROMPT_OVERRIDDEN).speak
-        self.assertTrue(spoken.startswith("codex aldı."))
-        self.assertIn("bekleyen metin vardı", spoken)
-        self.assertIn("sen istediğin için", spoken)
+        self.assertTrue(spoken.startswith("codex got it."))
+        self.assertIn("text already waiting", spoken)
+        self.assertIn("you asked me to send anyway", spoken)
         # And it still must not narrate the enforcement model.
         self.assertNotIn("host", spoken.lower())
 
     def test_an_ordinary_green_is_the_short_sentence(self) -> None:
         spoken = self.receipt("", HOST_GUARDED).speak
-        self.assertEqual(spoken, "codex aldı.")
+        self.assertEqual(spoken, "codex got it.")
 
 
 class ConfigShapeTests(unittest.TestCase):

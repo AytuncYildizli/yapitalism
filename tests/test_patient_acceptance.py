@@ -160,9 +160,9 @@ class SpokenDifferenceTests(unittest.TestCase):
             )
         )
         self.assertEqual(receipt.status, "YELLOW")
-        self.assertIn("terminalde hareket var", receipt.speak)
+        self.assertIn("still changing", receipt.speak)
         # It must NOT claim the agent is working - a spinner moves the pane.
-        self.assertNotIn("çalışıyor", receipt.speak)
+        self.assertNotIn("working", receipt.speak)
         self.assertIn("42", receipt.speak)
 
     def test_a_silent_pane_is_reported_as_no_movement(self) -> None:
@@ -170,7 +170,7 @@ class SpokenDifferenceTests(unittest.TestCase):
             AcceptanceOutcome(False, 3, "canary_timeout_pane_still", False, 8.0)
         )
         self.assertEqual(receipt.status, "YELLOW")
-        self.assertIn("hareket", receipt.speak)
+        self.assertIn("nothing on screen changed", receipt.speak)
 
     def test_neither_is_ever_spoken_as_done(self) -> None:
         for acceptance in (
@@ -182,10 +182,10 @@ class SpokenDifferenceTests(unittest.TestCase):
             # Leads with the delivery, not with a colour word nobody can act on,
             # and offers to LOOK. Never to resend: the text is already in the
             # terminal, so a second write would be a second message.
-            self.assertTrue(receipt.speak.startswith("Gönderdim"))
-            self.assertIn("doğrulayamadım", receipt.speak)
-            self.assertIn("Bakayım mı?", receipt.speak)
-            self.assertNotIn("tekrar gönder", receipt.speak.lower())
+            self.assertTrue(receipt.speak.startswith("Sent"))
+            self.assertIn("could not verify", receipt.speak)
+            self.assertIn("Want me to look?", receipt.speak)
+            self.assertNotIn("resend", receipt.speak.lower())
 
 
 if __name__ == "__main__":
@@ -211,14 +211,14 @@ class BlockingPromptRefusalTests(unittest.TestCase):
         receipt = self._receipt("rejected_trust_prompt")
         self.assertEqual(receipt.status, "RED")
         self.assertFalse(receipt.accepted)
-        self.assertTrue(receipt.speak.startswith("Gönderilmedi:"))
+        self.assertTrue(receipt.speak.startswith("Not sent:"))
 
     def test_each_blocking_kind_gets_its_own_wording(self) -> None:
         trust = self._receipt("rejected_trust_prompt").speak
         auth = self._receipt("rejected_auth_prompt").speak
         self.assertNotEqual(trust, auth)
-        self.assertIn("güven", trust)
-        self.assertIn("giriş", auth)
+        self.assertIn("trust", trust)
+        self.assertIn("login", auth)
 
     def test_refusal_never_reads_as_delivered(self) -> None:
         for phase in (

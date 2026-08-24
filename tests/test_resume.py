@@ -94,8 +94,8 @@ class ResumeArgvTests(unittest.TestCase):
         exact, last = speak_fidelity(EXACT), speak_fidelity(LAST)
         self.assertNotEqual(exact, last)
         # `last` must carry the doubt, or the distinction dies at the last step.
-        self.assertIn("garanti yok", last)
-        self.assertNotIn("garanti yok", exact)
+        self.assertIn("no guarantee", last)
+        self.assertNotIn("no guarantee", exact)
 
 
 class ResumeSessionArgvTests(unittest.TestCase):

@@ -16,7 +16,7 @@ class SpokenPaneNameTests(unittest.TestCase):
     def test_a_pane_is_named_by_its_folder_and_runtime(self) -> None:
         self.assertEqual(
             _spoken_pane_name("/Users/a/projects/relayproof", "codex"),
-            "relayproof klasöründeki codex",
+            "the codex in relayproof",
         )
 
     def test_a_missing_directory_falls_back_to_the_runtime_alone(self) -> None:
@@ -25,7 +25,7 @@ class SpokenPaneNameTests(unittest.TestCase):
 
     def test_a_trailing_slash_does_not_produce_an_empty_name(self) -> None:
         self.assertEqual(
-            _spoken_pane_name("/Users/a/work/whip/", "claude"), "whip klasöründeki claude"
+            _spoken_pane_name("/Users/a/work/whip/", "claude"), "the claude in whip"
         )
 
     def test_every_spoken_line_uses_real_turkish_letters(self) -> None:
