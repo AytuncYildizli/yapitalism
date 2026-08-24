@@ -25,6 +25,7 @@ MCP client (Codex · Hermes · Claude Code · Claude Desktop · Cursor)
     │  MCP over loopback — no public endpoint, no OAuth, no relay
     ▼
 yapitalism MCP server          panes_list · pane_read · pane_send
+    │                          pane_await · pane_task
     │                          panes_create · panes_resume · pane_clear
     ├── superset backend       local host-service over tRPC (127.0.0.1:48900)
     └── tmux backend           capture-pane / send-keys
@@ -74,6 +75,39 @@ stays the canary alone. A YELLOW therefore says which kind it is:
 What remains irreducible: if an agent silently ignores the text and prints nothing, no mechanism
 here can distinguish that from an agent that never received it. Verification needs the agent to
 emit something.
+
+### The second receipt: how the turn ended
+
+Delivery is table stakes; the expensive failure is an agent that has been sitting on a yes/no
+question for forty minutes while you thought it was working. `pane_await` watches a pane until the
+agent's **turn** ends and says how; `pane_task` is send-then-await in one call — instruct, walk
+away, come back to one of:
+
+| turn | meaning |
+| --- | --- |
+| `ended` | prompt idle, screen stopped changing. The turn is over — spoken with "not that the work is correct" attached, never as "done". |
+| `waiting_input` | a blocking dialog owns the screen (trust / login / confirmation). You are the blocker, and the payload's `tail` carries the question so it can be quoted. |
+| `agent_error` | a known failure line owns the screen — `Please run /login`, a 401, a rate limit — named, not timed out. |
+| `exited` | the pane no longer runs an agent. |
+| `running` | still changing when time ran out. Unproven; offers to look. |
+
+An `ended` verdict re-verifies the agent process is still alive before it is claimed: the frozen
+prompt of a dead pane must not be celebrated as a finished turn.
+
+### Who may write, by transport
+
+The bearer token answers *who is calling*; it never answered *what they may do*. Since 0.5.0:
+stdio clients write, always — the OS made that trust decision when it let the client spawn the
+process. **Writes over HTTP are off by default** and every refusal names the fix:
+`yapitalism authority allow-http-writes`, once, on that machine (`yapitalism setup` asks the same
+question while printing the HTTP registration lines). Reading, watching and `doctor` work on every
+transport regardless, and `yapitalism-mcp --read-only` turns writes off everywhere — install the
+watcher first, allow writes when it has earned them. Every write result carries its `origin`.
+
+On tmux, the send path also pins the **identity** of the admitted agent (pid + start time) and
+re-verifies it immediately before Enter. An agent that exits into a shell between typing and
+submit gets the text staged but never submitted — typing is recoverable, Enter into a shell is
+command execution.
 
 ### Where the checks happen
 

@@ -120,6 +120,29 @@ def classify_tree(rows: list[tuple[int, int, str]], pane_pid: int) -> str:
     agent and now runs a plain shell must never be treated as an agent target,
     or a spoken instruction becomes an arbitrary shell command.
     """
+    known, agent, saw_shell = _scan_tree(rows, pane_pid)
+    if not known:
+        return "unknown"
+    if agent is not None:
+        return agent[1]
+    return "shell" if saw_shell else "unknown"
+
+
+def agent_process(rows: list[tuple[int, int, str]], pane_pid: int) -> int | None:
+    """The pid of the process that makes this pane an agent, or None.
+
+    Same walk, same argv[0] rule as `classify_tree` — by construction, because
+    both read one shared scan. Two implementations of the boundary would drift,
+    and the drifted one would be the one an attacker gets to pick.
+    """
+    _, agent, _ = _scan_tree(rows, pane_pid)
+    return agent[0] if agent is not None else None
+
+
+def _scan_tree(
+    rows: list[tuple[int, int, str]], pane_pid: int
+) -> tuple[bool, tuple[int, str] | None, bool]:
+    """(pane known, first agent node as (pid, runtime), saw a shell)."""
     by_parent: dict[int, list[tuple[int, int, str]]] = {}
     by_pid: dict[int, tuple[int, int, str]] = {}
     for row in rows:
@@ -128,7 +151,7 @@ def classify_tree(rows: list[tuple[int, int, str]], pane_pid: int) -> str:
         by_parent.setdefault(ppid, []).append(row)
 
     if pane_pid not in by_pid:
-        return "unknown"
+        return False, None, False
 
     queue = [by_pid[pane_pid]]
     seen: set[int] = set()
@@ -156,11 +179,11 @@ def classify_tree(rows: list[tuple[int, int, str]], pane_pid: int) -> str:
         executable = names[0] if names else ""
         for needle, runtime in _AGENTS:
             if executable == needle:
-                return runtime
+                return True, (pid, runtime), saw_shell
         if executable in _SHELLS:
             saw_shell = True
         queue.extend(by_parent.get(pid, []))
-    return "shell" if saw_shell else "unknown"
+    return True, None, saw_shell
 
 
 def parse_ps_table(raw: str) -> list[tuple[int, int, str]]:
@@ -170,6 +193,54 @@ def parse_ps_table(raw: str) -> list[tuple[int, int, str]]:
         if match:
             rows.append((int(match.group(1)), int(match.group(2)), match.group(3)))
     return rows
+
+
+def pid_start_time(pid: int) -> str:
+    """When this pid started, as ps prints it — the anti-reuse half of identity.
+
+    A pid alone can be recycled by the OS; a pid plus its exact start time
+    cannot be, in practice. Empty string when the process is gone or ps fails,
+    which callers must treat as "identity unknown", never as a match.
+    """
+    try:
+        completed = subprocess.run(
+            ["ps", "-o", "lstart=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return completed.stdout.strip()
+
+
+def agent_fingerprint(pane_id: str) -> tuple[int, str, str] | None:
+    """(pid, runtime, start_time) of the agent process owning this pane, or None.
+
+    This is the identity a send holds while it types: captured after the gate
+    admits the pane, verified again immediately before Enter. "The pane's
+    runtime looks like claude" and "the same claude process that was admitted
+    is still the one under the text" are different claims, and only the second
+    survives an agent exiting into a shell mid-write.
+    """
+    try:
+        raw = _run(["display-message", "-p", "-t", pane_id, "#{pane_pid}"])
+    except TmuxError:
+        return None
+    try:
+        pane_pid = int(raw.strip())
+    except ValueError:
+        return None
+    _, agent, _ = _scan_tree(_process_table(), pane_pid)
+    if agent is None:
+        return None
+    pid, runtime = agent
+    started = pid_start_time(pid)
+    if not started:
+        # The process died between the scan and the ps: identity unknown.
+        return None
+    return pid, runtime, started
 
 
 def _process_table() -> list[tuple[int, int, str]]:

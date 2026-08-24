@@ -32,6 +32,7 @@ from ...tokens import BoundedTokens
 from ..revision import RevisionTracker
 from ..tmux import (
     TmuxError,
+    agent_fingerprint,
     capture_pane,
     send_clear_action,
     list_panes,
@@ -490,6 +491,20 @@ class TmuxBackend:
                         ),
                     )
 
+                # The identity this send will hold while it types. The runtime gate
+                # above says "an agent lives here"; this pins WHICH process, so an
+                # agent that exits into a shell between the gate and the Enter is
+                # caught at the only moment it matters. pid + start time, because a
+                # pid alone can be recycled.
+                fingerprint = self._fingerprint_of(target_id)
+                if fingerprint is None:
+                    return SendOutcome(
+                        phase="rejected_not_an_agent",
+                        dispatched=False,
+                        runtime=runtime,
+                        reason="the agent process vanished between the gate and the write",
+                    )
+
                 revision_before = self._revisions.observe(target_id, before)
                 if canary is not None:
                     if _canary_could_appear(before, canary):
@@ -512,6 +527,20 @@ class TmuxBackend:
                 # the demo command. A delayed Enter submitted it, so one retry is
                 # made with a longer settle; after that the truth is "staged".
                 time.sleep(_SUBMIT_SETTLE_SECONDS)
+                # Verify the SAME process is still under the text before Enter.
+                # Typing is recoverable; Enter is not. A pane where claude died
+                # into zsh during the settle has the message sitting in a SHELL
+                # prompt, and pressing Enter would execute it as a command.
+                if self._fingerprint_of(target_id) != fingerprint:
+                    after = capture_pane(target_id, 1000)
+                    return SendOutcome(
+                        phase="staged_agent_changed",
+                        dispatched=False,
+                        runtime=runtime,
+                        revision_before=revision_before,
+                        revision_after=self._revisions.observe(target_id, after),
+                        reason="the process under the text changed between typing and submit",
+                    )
                 send_enter(target_id)
                 self._ambiguous_tokens.discard(client_token)
                 submitted = False
@@ -597,3 +626,11 @@ class TmuxBackend:
             if pane.target_id == target_id:
                 return pane.runtime
         return "unknown"
+
+    def _fingerprint_of(self, target_id: str) -> tuple[int, str, str] | None:
+        """(pid, runtime, start_time) of the agent process, or None.
+
+        A method rather than a call so tests that script a pane's runtime can
+        script its identity the same way.
+        """
+        return agent_fingerprint(target_id.split(":", 1)[1])
