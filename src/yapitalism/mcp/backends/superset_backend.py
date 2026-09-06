@@ -190,6 +190,13 @@ class SupersetBackend:
     def __init__(self, manifest_path: Path | str | None = None) -> None:
         self._manifest_path = Path(manifest_path) if manifest_path else resolve_manifest_path()
         self._adapter: SupersetAdapter | None = None
+        #: The manifest file's (mtime_ns, size) when the cached adapter was
+        #: built. Rotation detection, not security: the host rotates its token
+        #: and `setup --force` rewrites the manifest, and a server that caches
+        #: the credential forever 401s until someone restarts it — measured on
+        #: a long-lived stdio client that kept failing while a fresh session
+        #: on the same machine saw every pane.
+        self._manifest_stamp: tuple[int, int] | None = None
         # One entry per in-flight send, keyed by its client token, consumed by that
         # send's await. Replaces two singleton fields that any concurrent send
         # overwrote.
@@ -241,10 +248,28 @@ class SupersetBackend:
             return UNKNOWN_HOST
         return HOST_GUARDED if guarded else CLIENT_GUARDED
 
+    def _manifest_stat(self) -> tuple[int, int] | None:
+        try:
+            stat = os.stat(self._manifest_path)
+        except OSError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
+
     def _connect(self) -> SupersetAdapter:
-        # Built lazily and cached: constructing it reads a 0600 manifest, and a
-        # missing manifest must surface as a backend error rather than stop the
-        # whole server from starting.
+        # Built lazily and cached — but never PAST a manifest rotation. The
+        # cheap stat below is checked on every call: when `setup --force`
+        # rewrites the manifest after the host rotates its token, the cached
+        # adapter and every terminal-bound adapter derived from it carry a dead
+        # credential, and a long-lived client would 401 until restarted. The
+        # refresh happens BEFORE any request is made, so nothing is ever
+        # retried or replayed — the next read simply goes out with the
+        # credential the file holds now.
+        if self._adapter is not None:
+            stamp = self._manifest_stat()
+            if stamp != self._manifest_stamp:
+                self._adapter = None
+                self._adapters.clear()
+                self._workspace_of = {}
         if self._adapter is None:
             # No manifest at all is ABSENCE, and it is the common case: almost
             # nobody runs Superset. It used to reach the operator as "superset
@@ -263,6 +288,11 @@ class SupersetBackend:
                     "the Superset app."
                 )
             try:
+                # Stamp read BEFORE the manifest, not after: if the file is
+                # replaced between the two, the stale stamp forces one more
+                # harmless rebuild on the next call instead of pinning a
+                # rotated credential under a fresh stamp.
+                self._manifest_stamp = self._manifest_stat()
                 self._adapter = SupersetAdapter(
                     SupersetConfig.from_manifest(self._manifest_path)
                 )

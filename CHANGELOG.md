@@ -6,6 +6,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- **Hermes agents as task targets.** `hermes_list` shows the Hermes gateways
+  the user registered with `hermes peer add` (Hermes owns the registry and
+  the credentials; nothing is configured, stored, or hardcoded on this side).
+  `hermes_task_send` submits one task as its OWN asynchronous turn on the
+  peer (`hermes peer run`) — never into an existing chat — and returns
+  `accepted` with a run id, which is the ceiling of what a send may claim.
+  `hermes_task_status` maps progress from Hermes's own status word to
+  accepted / working / completed / blocked / unknown; `completed`
+  additionally requires final output, and unrecognised words stay `unknown`
+  with the raw answer attached. Duplicate task keys are refused locally and
+  deduplicated by Hermes's idempotency key; a depth-1 relay marker turns a
+  bot-to-bot loop into one refused call. Sends pass the write-authority gate.
+
+### Fixed
+
+- A rotated Superset manifest now reaches a long-lived server without a
+  restart: `_connect` stats the manifest on every call and rebuilds the
+  cached adapter (and every terminal-bound adapter derived from it) when the
+  file changed — before any request, so nothing is retried or replayed.
+  Measured live: a fresh session saw every pane while a long-lived stdio
+  client answered `Superset tRPC HTTP 401` forever.
+
 ## [0.6.0] - 2026-08-24
 
 Council slices two and four: say names, and run the whole lifecycle on a peer.

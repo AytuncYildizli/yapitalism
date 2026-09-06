@@ -416,6 +416,168 @@ def panes_unname(name: str) -> dict[str, object]:
     return {"ok": True, "name": name, "speak": f"'{name}' no longer names anything."}
 
 
+#: Task keys this process has already dispatched to a Hermes peer. The same
+#: double-guard pane_send uses: Hermes deduplicates on the idempotency key
+#: server-side, and this side refuses the repeat before it even asks.
+_hermes_tasks_sent = BoundedTokens(capacity=256)
+_hermes_tasks_guard = threading.Lock()
+
+
+@mcp.tool
+def hermes_list() -> dict[str, object]:
+    """List the Hermes gateways this machine's user has registered.
+
+    Read-only. Peers come from `hermes peer add` — Hermes owns the registry
+    and the credentials; nothing is configured or stored on this side, and
+    nothing is hardcoded. An empty list is an answer: register a gateway with
+    `hermes peer add <name> --url http://host:port --key <API_SERVER_KEY>`.
+
+    A multiplexed peer hosts named agent profiles addressed as
+    `<peer>/<agent>` in the task tools; Hermes does not enumerate a peer's
+    profiles remotely, so ask the peer's operator what exists.
+    """
+    from ..hermes import HermesUnavailable, list_peers
+
+    try:
+        peers_found = list_peers()
+    except HermesUnavailable as absent:
+        return {"ok": False, "error": str(absent)}
+    except Exception as error:  # subprocess timeout, decode — say which
+        return {"ok": False, "error": f"{type(error).__name__}: {error}"}
+    return {
+        "ok": True,
+        "peers": peers_found,
+        "speak": (
+            f"{len(peers_found)} Hermes gateway(s) registered."
+            if peers_found
+            else "No Hermes gateways registered on this machine."
+        ),
+    }
+
+
+@mcp.tool
+def hermes_task_send(
+    target: str,
+    text: str,
+    task_key: str = "",
+) -> dict[str, object]:
+    """Submit one task to a Hermes agent and return ACCEPTED with a run id.
+
+    This is a WRITE to another agent. Name the target and the task in one
+    sentence and get an explicit confirmation before calling it.
+
+    `target` is `<peer>` or `<peer>/<agent>` as registered with `hermes peer
+    add`. The task runs as its OWN asynchronous turn on the peer (Hermes
+    `peer run`), never inside an existing chat — an ongoing WhatsApp
+    conversation cannot be interrupted by this tool.
+
+    `state` is the only thing to speak from, and `accepted` is its ceiling
+    here: a run id proves the peer took the task, not that anything was done.
+    Poll `hermes_task_status` with the returned `run_id` for the rest.
+
+    `task_key` is how a RETRY stays one task instead of two: it becomes
+    Hermes's idempotency key, and a key this process already dispatched is
+    refused locally. Pass the SAME key when re-submitting after an ambiguous
+    failure; leave it empty for a genuinely new task (one is minted and
+    returned).
+
+    Loop damping: every task is prefixed with a relay marker, and a task whose
+    text already carries the marker is refused — a bot piping a Hermes reply
+    back into this tool stops at the second hop. Depth-1 by design; it does
+    not detect longer cycles between other tools.
+    """
+    refused = _refuse_write("sending a Hermes task")
+    if refused:
+        return {**refused, "target": target}
+    from ..hermes import HermesUnavailable, carries_loop_marker, submit_task
+
+    if carries_loop_marker(text):
+        return {
+            "ok": False,
+            "state": "not_submitted",
+            "reason": "relay_loop",
+            "error": (
+                "this text was already relayed through yapitalism once; "
+                "refusing the second hop to stop a bot-to-bot loop"
+            ),
+        }
+    key = task_key or str(uuid4())
+    with _hermes_tasks_guard:
+        if key in _hermes_tasks_sent:
+            return {
+                "ok": False,
+                "state": "not_submitted",
+                "reason": "duplicate_task_key",
+                "error": (
+                    "this task key was already dispatched from here; poll "
+                    "hermes_task_status instead of re-sending"
+                ),
+            }
+        _hermes_tasks_sent.add(key)
+    try:
+        result = submit_task(target, text, key)
+    except HermesUnavailable as absent:
+        return {"ok": False, "state": "not_submitted", "error": str(absent)}
+    except Exception as error:
+        return {
+            "ok": False,
+            "state": "unknown_after_dispatch",
+            "error": (
+                f"the submission attempt failed mid-flight "
+                f"({type(error).__name__}: {error}); the task MAY have "
+                "reached the peer. Re-submit with the SAME task_key — "
+                "Hermes deduplicates on it — or check the peer."
+            ),
+            "task_key": key,
+        }
+    if result.get("ok"):
+        result["origin"] = _authority_state["transport"]
+        result["speak"] = (
+            "Hermes accepted the task; accepted is not done. I can check "
+            "progress with the run id."
+        )
+    return {"target": target, **result}
+
+
+@mcp.tool
+def hermes_task_status(target: str, run_id: str) -> dict[str, object]:
+    """Read one Hermes task's progress by run id. Read-only.
+
+    `state` is accepted / working / completed / blocked / unknown, derived
+    only from Hermes's own status word — never from an HTTP round-trip
+    succeeding. `completed` additionally requires final output to exist;
+    `unknown` carries Hermes's raw answer so nothing is guessed. Never speak
+    `completed` from any other state.
+    """
+    from ..hermes import HermesUnavailable, task_status
+
+    try:
+        result = task_status(target, run_id)
+    except HermesUnavailable as absent:
+        return {"ok": False, "state": "unknown", "error": str(absent)}
+    except Exception as error:
+        return {
+            "ok": False,
+            "state": "unknown",
+            "error": f"{type(error).__name__}: {error}",
+        }
+    speaks = {
+        "accepted": "The peer has the task but has not started it.",
+        "working": "The task is running on the peer.",
+        "completed": "The task finished and produced output — in the payload.",
+        "blocked": (
+            "The task is not progressing; the peer's answer is in the "
+            "payload. Nothing was retried from here."
+        ),
+        "unknown": (
+            "The peer answered in words this side does not recognise; the "
+            "raw answer is in the payload. Not guessing."
+        ),
+    }
+    result.setdefault("speak", speaks.get(str(result.get("state")), speaks["unknown"]))
+    return {"target": target, **result}
+
+
 #: How long a pane may sit unchanged before the wait is abandoned.
 IDLE_TIMEOUT_SECONDS = 8.0
 #: Absolute ceiling. Deliberately short: this runs inside a synchronous voice
