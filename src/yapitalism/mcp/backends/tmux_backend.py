@@ -27,7 +27,12 @@ import time
 from collections import defaultdict
 
 from ...adapters.superset import _canary_could_appear, _structured_canary_observed
-from ...prompt_state import EMPTY, HAS_TEXT, detect_prompt_state
+from ...prompt_state import (
+    EMPTY,
+    HAS_TEXT,
+    PROMPT_CHECK_ADVISORY_RUNTIMES,
+    detect_prompt_state,
+)
 from ...tokens import BoundedTokens
 from ..revision import RevisionTracker
 from ..tmux import (
@@ -456,7 +461,15 @@ class TmuxBackend:
                 # corrupted message. Refusing on anything short of a confident EMPTY
                 # is the same rule the guarded Superset host applies, and `pane_clear`
                 # is the way out of both.
-                if prompt_state != EMPTY:
+                # Claude Code draws a SUGGESTED prompt on its input line, which a
+                # snapshot cannot tell from a draft, and typing replaces it. For
+                # those runtimes text in the composer is advisory: the send goes
+                # through and the receipt says the prompt held text. UNKNOWN stays
+                # a refusal for everyone — that is a menu or an overlay, not a hint.
+                prompt_advisory = (
+                    prompt_state == HAS_TEXT and runtime in PROMPT_CHECK_ADVISORY_RUNTIMES
+                )
+                if prompt_state != EMPTY and not prompt_advisory:
                     return SendOutcome(
                         phase=(
                             "rejected_prompt_not_empty"
@@ -544,17 +557,28 @@ class TmuxBackend:
                 send_enter(target_id)
                 self._ambiguous_tokens.discard(client_token)
                 submitted = False
-                for attempt in range(2):
-                    time.sleep(_SUBMIT_VERIFY_SECONDS * (attempt + 1))
+                if prompt_advisory:
+                    # ONE Enter, and the verdict comes from the screen moving, not
+                    # from the composer: for this runtime the composer may show a
+                    # fresh suggestion right after a submit, and a second Enter on
+                    # a suggestion would submit the suggestion. Movement is a
+                    # weaker proof than an empty composer, so a still screen is
+                    # reported as staged rather than guessed as submitted.
+                    time.sleep(_SUBMIT_VERIFY_SECONDS)
                     after = capture_pane(target_id, 1000)
-                    if detect_prompt_state(after, runtime) != HAS_TEXT:
-                        # EMPTY is a proven submit. UNKNOWN means the screen is
-                        # busy redrawing - the agent taking the message looks
-                        # exactly like that - so only a composer STILL holding
-                        # text counts as not submitted.
-                        submitted = True
-                        break
-                    send_enter(target_id)
+                    submitted = after != before
+                else:
+                    for attempt in range(2):
+                        time.sleep(_SUBMIT_VERIFY_SECONDS * (attempt + 1))
+                        after = capture_pane(target_id, 1000)
+                        if detect_prompt_state(after, runtime) != HAS_TEXT:
+                            # EMPTY is a proven submit. UNKNOWN means the screen is
+                            # busy redrawing - the agent taking the message looks
+                            # exactly like that - so only a composer STILL holding
+                            # text counts as not submitted.
+                            submitted = True
+                            break
+                        send_enter(target_id)
                 if not submitted:
                     after = capture_pane(target_id, 1000)
             except TmuxError as error:
@@ -577,6 +601,10 @@ class TmuxBackend:
                 runtime=runtime,
                 revision_before=revision_before,
                 revision_after=self._revisions.observe(target_id, after),
+                # Said out loud by the receipt: the composer held text and the
+                # send went through anyway. If it was a real draft, the operator
+                # hears exactly that instead of a clean "got it".
+                reason="prompt_text_advisory" if prompt_advisory else "",
             )
 
     def await_acceptance(

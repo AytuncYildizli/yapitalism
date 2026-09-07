@@ -145,13 +145,26 @@ def build_receipt(
                 f"{agent} got it. There was text already waiting in the "
                 "prompt; you asked me to send anyway, so I did."
             )
+        elif send.reason == "prompt_text_advisory":
+            # Claude Code draws a suggested prompt on its input line, so text
+            # there is advisory for that runtime: the send went through, and the
+            # operator hears that it did — if it was a real draft, this is where
+            # they find out.
+            speak = (
+                f"{agent} got it. Its prompt showed text — Claude Code shows "
+                "suggestions there — and I sent anyway."
+            )
         else:
             speak = f"{agent} got it."
         return Receipt(
             status="GREEN",
             phase=send.phase,
             accepted=True,
-            reason=send.reason if send.reason == "host_prompt_check_overridden" else "",
+            reason=(
+                send.reason
+                if send.reason in ("host_prompt_check_overridden", "prompt_text_advisory")
+                else ""
+            ),
             speak=speak,
             missing_guarantees=degraded,
             client_guarantees=client,

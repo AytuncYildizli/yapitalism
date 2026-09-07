@@ -213,18 +213,24 @@ class OverrideFenceTests(unittest.TestCase):
         self.assertEqual(outcome.phase, "rejected_prompt_not_empty")
         self.assertEqual(len(sends), 1)
 
-    def test_it_does_not_fire_for_claude_or_kimi(self) -> None:
-        """No observed placeholders there, so both readers agree and the RED is real.
+    def test_it_does_not_fire_for_kimi(self) -> None:
+        """No observed placeholder there, so both readers agree and the RED is real.
 
         Lifting it for them would be overruling a verdict this side never contradicted.
         """
-        for runtime in ("claude", "kimi"):
-            with self.subTest(runtime=runtime):
-                outcome, sends = self.send(
-                    lambda s, r=runtime: host(s, runtime=r), override_host_prompt_check=True
-                )
-                self.assertEqual(len(sends), 1)
-                self.assertFalse(outcome.dispatched)
+        outcome, sends = self.send(
+            lambda s: host(s, runtime="kimi"), override_host_prompt_check=True
+        )
+        self.assertEqual(len(sends), 1)
+        self.assertFalse(outcome.dispatched)
+
+    def test_claude_is_advisory_even_without_the_operator_override(self) -> None:
+        """The measured defect: a suggested prompt the host counts as staged text."""
+        outcome, sends = self.send(lambda s: host(s, runtime="claude"))
+        self.assertEqual(len(sends), 2)
+        self.assertFalse(sends[1]["requireEmptyPrompt"])
+        self.assertTrue(outcome.dispatched)
+        self.assertEqual(outcome.reason, "prompt_text_advisory")
 
     def test_it_does_not_fire_for_any_other_refusal(self) -> None:
         """A hard whitelist, because nothing in the mechanism knows the difference.
