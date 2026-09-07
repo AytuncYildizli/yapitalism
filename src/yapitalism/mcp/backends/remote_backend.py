@@ -25,6 +25,10 @@ from ...peers import Peer
 from .base import BackendError
 
 
+#: "Initialised against a stateless peer": falsy, so it sends no session header.
+_STATELESS = ""
+
+
 class RemotePeer:
     def __init__(self, peer: Peer, *, timeout: float = 20.0) -> None:
         self._peer = peer
@@ -95,7 +99,12 @@ class RemotePeer:
                 f"peer {self._peer.name} rejected initialize: {message['error'].get('message', '')[:120]}"
             )
         if not session:
-            raise BackendError(f"peer {self._peer.name} issued no session id")
+            # Stateless streamable HTTP (yapitalism serves this way since the
+            # reconnect fix): the peer keeps nothing between requests, so there
+            # is no id to carry and nothing to lose when it restarts. The empty
+            # string marks "initialised, stateless" — falsy, so no header is
+            # sent and a 404 is never mistaken for a lost session.
+            session = _STATELESS
         notif = {"jsonrpc": "2.0", "method": "notifications/initialized"}
         try:
             self._post(notif, session=session)

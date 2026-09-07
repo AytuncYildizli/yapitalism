@@ -42,6 +42,9 @@ from .base import (
     SendOutcome,
 )
 
+# Kept apart from the import block above, which another in-flight change edits.
+from ...prompt_state import PROMPT_CHECK_ADVISORY_RUNTIMES  # noqa: E402
+
 _CACHE_DIR = Path.home() / ".cache" / "superset-watch-voice"
 _MANIFEST_DEFAULT = _CACHE_DIR / "yapitalism-manifest.json"
 # Deliberately NOT renamed: this is the filename an existing install actually
@@ -536,7 +539,19 @@ class SupersetBackend:
                     confirm=True,
                 )
                 overridden = False
-                if override_host_prompt_check and self._override_allowed(result, baseline.text):
+                # Claude Code shows a SUGGESTED prompt on its input line; the host
+                # counts it as staged text and refuses every send, which stopped the
+                # operator on every turn. For advisory runtimes a prompt_not_empty
+                # refusal is re-dispatched without the host's prompt requirement and
+                # the receipt says the prompt held text. Not an operator override:
+                # a different reason, so the two are never confused.
+                advisory = (
+                    result.phase == "rejected_prompt_not_empty"
+                    and runtime in PROMPT_CHECK_ADVISORY_RUNTIMES
+                )
+                if advisory or (
+                    override_host_prompt_check and self._override_allowed(result, baseline.text)
+                ):
                     self._record_override(target_id, result.target_runtime, baseline.revision)
                     result = adapter.dispatch(
                         text,
@@ -592,7 +607,7 @@ class SupersetBackend:
                     self._refusal_reason(target_id, result.phase, baseline.text, result.target_runtime)
                     if not result.dispatched
                     else (
-                        "host_prompt_check_overridden"
+                        ("prompt_text_advisory" if advisory else "host_prompt_check_overridden")
                         if overridden
                         else ("" if result.prompt_verified else "prompt_not_verified")
                     )

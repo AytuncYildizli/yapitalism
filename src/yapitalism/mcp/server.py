@@ -143,6 +143,44 @@ def _refuse_write(action: str) -> dict[str, object] | None:
     return None
 
 
+class _AuthFailureLog:
+    """Name the client behind a 401, without ever naming its token.
+
+    The framework's auth middleware says `invalid_token` and nothing else, so a
+    client holding a stale bearer was hammering this server for days while every
+    log line looked the same. On a 401 this logs the client address, its
+    User-Agent, and a 6-hex fingerprint of the presented Authorization header —
+    comparable against the same fingerprint of the token file, never reversible
+    to the secret.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        import hashlib
+
+        headers = dict(scope.get("headers") or [])
+        agent = headers.get(b"user-agent", b"").decode("utf-8", "replace")[:80]
+        presented = headers.get(b"authorization", b"")
+        fingerprint = hashlib.sha256(presented).hexdigest()[:6] if presented else "none"
+        client = scope.get("client") or ("?", 0)
+
+        async def send_logged(message):
+            if message.get("type") == "http.response.start" and message.get("status") == 401:
+                print(
+                    f"yapitalism-mcp: 401 for {client[0]}:{client[1]} "
+                    f"user-agent={agent!r} auth-fingerprint={fingerprint}",
+                    file=sys.stderr,
+                )
+            await send(message)
+
+        await self.app(scope, receive, send_logged)
+
+
 def _find_live_pane(target_id: str) -> dict[str, object] | None:
     """This pane's row from a LIVE listing — local or on its peer — or None."""
     owner = peers.owner_of(target_id)
@@ -863,7 +901,23 @@ def main(argv: list[str] | None = None) -> None:
         f"yapitalism-mcp {__version__} serving http://{host}:{port}/mcp",
         file=sys.stderr,
     )
-    mcp.run(transport="http", host=host, port=port, show_banner=False)
+    from starlette.middleware import Middleware
+
+    mcp.run(
+        transport="http",
+        host=host,
+        port=port,
+        show_banner=False,
+        # Stateless: no server-side session to lose. Every restart of this
+        # process used to invalidate every client's mcp-session-id, and the
+        # clients answered with reconnect storms — measured as bursts of 404s
+        # and, for one client holding a stale token, bursts of 401s. Nothing
+        # here needs server-initiated notifications, so a session buys nothing
+        # and costs the reconnect. Auth, authority and receipts are per request
+        # and unchanged.
+        stateless_http=True,
+        middleware=[Middleware(_AuthFailureLog)],
+    )
 
 
 

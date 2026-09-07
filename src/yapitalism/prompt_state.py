@@ -31,6 +31,17 @@ EMPTY = "empty"
 HAS_TEXT = "has_text"
 UNKNOWN = "unknown"
 
+#: Runtimes whose composer shows text that is NOT staged input. Claude Code
+#: renders a SUGGESTED next prompt on the input line — "❯ devam et, paralel
+#: kısımları yap", observed live 2026-09-06 — indistinguishable in a snapshot
+#: from a half-typed draft, and typing replaces it rather than appending. So for
+#: these runtimes a non-empty composer is ADVISORY: the send proceeds and the
+#: receipt says the prompt held text, instead of refusing and stopping the
+#: operator on every turn. Every other runtime keeps the refusal, because there
+#: a non-empty composer really is somebody's draft and a write would merge with
+#: it. Dialogs and unreadable screens stay refused for everyone.
+PROMPT_CHECK_ADVISORY_RUNTIMES = frozenset({"claude"})
+
 #: The glyph each runtime draws at the start of its input line.
 _MARKERS: dict[str, tuple[str, ...]] = {
     "codex": ("›", ">"),
